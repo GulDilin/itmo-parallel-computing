@@ -33,7 +33,7 @@ def find_n_for_exec_time(target: TargetDir, exec_time: int):
 def main():
     results = {}
     try:
-        for target in [TargetDir.TCC]:
+        for target in TargetDir:
             results[target.name] = {}
             results[target.name]['1000'] = find_n_for_exec_time(target, 1000)
             results[target.name]['5000'] = find_n_for_exec_time(target, 5000)

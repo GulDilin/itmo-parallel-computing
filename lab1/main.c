@@ -27,35 +27,34 @@ void print_arr(double *array, int n) {
 }
 
 int main(int argc, char *argv[]) {
-    unsigned int N, N_2;
     struct timeval T1, T2;
     long delta_ms;
-    // N = 4000;
-    N = atoi(argv[1]); /* N равен первому параметру командной строки */
-    N_2 = N / 2;
     gettimeofday(&T1, NULL); /* запомнить текущее время T1 */
-    double *m1 = malloc(N * sizeof(double));
-    double *m2 = malloc(N_2 * sizeof(double));
-    double *m2_cpy = malloc(N_2 * sizeof(double));
 
-    int A = 280;
-    int N_experiments = 100;
-
-    for (unsigned int i = 0; i < N_experiments; i++) /* 100 экспериментов */
+    for (unsigned int i = 0; i < 100; i++) /* 100 экспериментов */
     {
-        srand(i);
+        unsigned int N, N_2;
+        N = atoi(argv[1]); /* N равен первому параметру командной строки */
+        N_2 = N / 2;
+
+        double * restrict m1 = malloc(N * sizeof(double));
+        double * restrict m2 = malloc(N_2 * sizeof(double));
+        double * restrict m2_cpy = malloc(N_2 * sizeof(double));
+        int A = 280;
+
         unsigned int seedp = i;
 
         // generate 1
         for (int j = 0; j < N; ++j) {
 
-            m1[j] = (rand_r(&seedp) % (A * N_experiments)) / ((double) N_experiments) + 1;
+            m1[j] = (rand_r(&seedp) % (A * 100)) / 100.0 + 1;
         }
 
-        // m2_cpy[0] = 0;
         // generate 2
         for (int j = 0; j < N_2; ++j) {
             m2[j] = A + rand_r(&seedp) % (A * 9);
+        }
+        for (int j = 0; j < N_2; ++j) {
             m2_cpy[j] = m2[j];
         }
 
@@ -65,14 +64,16 @@ int main(int argc, char *argv[]) {
         }
         for (int j = 1; j < N_2; ++j) {
             m2[j] = m2[j] + m2_cpy[j - 1];
+        }
+        for (int j = 1; j < N_2; ++j) {
             m2[j] = pow(log10(m2[j]), M_E);
         }
 
         for (int j = 0; j < N_2; ++j) {
-            m2[j] = fmax(m2[j], m1[j]);
+            m2[j] = m2[j] > m1[j] ? m2[j] : m1[j] ;
         }
 
-        sort_stupid(m2, N_2);
+        // sort_stupid(m2, N_2);
 
         // reduce
         double X = 0;
@@ -89,8 +90,5 @@ int main(int argc, char *argv[]) {
     /* запомнить текущее время T2 */
     delta_ms = 1000 * (T2.tv_sec - T1.tv_sec) + (T2.tv_usec - T1.tv_usec) / 1000;
     printf("\n%ld\n", delta_ms); /* T2 - T1 */
-//    free(m1);
-//    free(m2);
-//    free(m2_cpy);
     return 0;
 }
