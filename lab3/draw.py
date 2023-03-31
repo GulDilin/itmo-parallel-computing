@@ -10,7 +10,7 @@ def main(args):
 
     for target in TargetDir:
         n_variants = results['N']
-        plt_save(target, n_variants, results)
+        plt_save(target, n_variants, results, postfix=args.postfix)
 
 
 if __name__ == '__main__':
@@ -20,6 +20,12 @@ if __name__ == '__main__':
         dest="results_path",
         type=str,
         default='./assets/results.json'
+    )
+    parser.add_argument(
+        '--postfix',
+        dest="postfix",
+        type=str,
+        default='results'
     )
     args = parser.parse_args()
     main(args)
