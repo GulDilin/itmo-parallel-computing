@@ -46,6 +46,7 @@ def main():
         for target in TargetDir:
             expected = ''
             n_variants = get_n_variants(config, target)
+            results['N'] = list(n_variants)
             print(f'{target=} {n_variants=}')
             results[target.name] = {}
             for n_threads in k:

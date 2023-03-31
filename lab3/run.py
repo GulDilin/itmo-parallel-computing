@@ -1,19 +1,27 @@
 import json
 import os
+import argparse
 import matplotlib.pyplot as plt
 from build import TargetDir, LabPrefix
-import argparse
 
 
-def run(target: TargetDir, n_size: int = 1, k: int = 0, ignore: bool = False):
-    lab_name = LabPrefix.NO_PARALLEL if k == 0 else f'{LabPrefix.PARALLEL}-{k}'
-    path = f'./{target.value}/{lab_name} {n_size}'
+def run(
+    target: TargetDir,
+    n_size: int = 1,
+    k: int = 0,
+    ignore: bool = False,
+    lab_name: LabPrefix = LabPrefix.DEFAULT
+):
+    env = ''
+    if k == 0:
+        lab_name = LabPrefix.NO_PARALLEL
+    else:
+        env = f'OMP_NUM_THREADS={k} OMP_DYNAMIC=FALSE '
+    path = f'{env}./{target.value}/{lab_name} {n_size} {k}'
     result = os.popen(path).read()
     numbers, timing = result.split('\n')[:2]
     if not ignore:
         print(f'{path} {timing}')
-    # if not ignore:
-    #     print(result)
     return numbers, int(timing)
 
 
@@ -37,33 +45,26 @@ def plt_save(target: TargetDir, n_variants: list, results: dict, postfix: str = 
 
 
 def main(args):
-    k = [1, 2, 4, 16]
+    k = args.k_variants
 
-    with open('./assets/n_config.json', 'r') as f:
+    config_path = './assets/n_config.json' if args.local_config else '../lab1/assets/n_config.json'
+    with open(config_path, 'r') as f:
         config = json.load(f)
+    with open('../lab1/assets/verification.json', 'r') as f:
+        verification = json.load(f)
 
     results = {}
-    verification = {}
-    targets = [t for t in TargetDir if t.name in args.targets]
     try:
-        for target in targets:
+        for target in TargetDir:
             n_variants = args.n_variants or get_n_variants(config, target)
+            results['N'] = list(n_variants)
             print(f'{target=} {n_variants=}')
             results[target.name] = {}
-            for n_threads in [0, *k]:
-                if args.k_variants and n_threads not in args.k_variants:
-                    continue
+            for n_threads in k:
                 results[target.name][n_threads] = []
 
             for n in n_variants:
-                if not args.k_variants or 0 in args.k_variants:
-                    numbers, timing = run(target, n, 0, False)
-                    results[target.name][0].append(timing)
-                    verification[n] = numbers
-
                 for n_threads in k:
-                    if args.k_variants and n_threads not in args.k_variants:
-                        continue
                     # prepend run
                     for i in range(3):
                         run(target, 100, n_threads, True)
@@ -71,25 +72,33 @@ def main(args):
                     numbers, timing = run(target, n, n_threads, False)
                     results[target.name][n_threads].append(timing)
 
-                    is_verified = numbers == verification[n]
+                    is_verified = args.local_config or numbers == verification.get(str(n), None)
                     print('verified' if is_verified else 'failed verification')
                     print(timing)
+
             plt_save(target, n_variants, results)
     except KeyboardInterrupt:
         pass
 
     with open('./assets/results.json', 'w') as f:
         json.dump(results, f)
-    with open('./assets/verification.json', 'w') as f:
-        json.dump(verification, f)
 
 
 if __name__ == '__main__':
-    target_vals = [t.name for t in TargetDir]
-    k_variants = (0, 1, 2, 4, 16)
     parser = argparse.ArgumentParser()
-    parser.add_argument('--target', '-t', dest="targets", nargs="*", default=target_vals, choices=target_vals)
-    parser.add_argument('--n-threads', '-k', dest="k_variants", type=int, nargs="*", default=None, choices=k_variants)
+    # k_variants = range(0, 17)
+    k_variants = [0, 1, 2, 3, 4, 8, 16, 32]
+    parser.add_argument('--n-threads', '-k', dest="k_variants", type=int, nargs="*", default=k_variants)
     parser.add_argument('--n-variants', dest="n_variants", type=int, nargs="*", default=None)
+    parser.add_argument('--n-start', dest="n_start", type=int, default=None)
+    parser.add_argument('--n-end', dest="n_end", type=int, default=None)
+    parser.add_argument('--n-amount', dest="n_amount", type=int, default=10)
+    parser.add_argument('--local-config', dest="local_config", action="store_true", default=False)
     args = parser.parse_args()
+    if args.n_start and args.n_end:
+        args.n_variants = range(
+            args.n_start,
+            args.n_end,
+            int((args.n_end - args.n_start) / args.n_amount)
+        )
     main(args)

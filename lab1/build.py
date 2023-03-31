@@ -4,9 +4,9 @@ from enum import Enum
 
 
 class TargetDir(str, Enum):
-    # GCC = 'target-gcc'
+    GCC = 'target-gcc'
     CLANG = 'target-clang'
-    # TCC = 'target-tcc'
+    TCC = 'target-tcc'
 
 
 class LabPrefix(str, Enum):

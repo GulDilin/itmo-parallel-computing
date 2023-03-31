@@ -26,9 +26,13 @@ void print_arr(double *array, int n) {
     printf("\n");
 }
 
+void print_delta(struct timeval T1, struct timeval T2) {
+    long delta_ms = 1000 * (T2.tv_sec - T1.tv_sec) + (T2.tv_usec - T1.tv_usec) / 1000;
+    printf("\n%ld\n", delta_ms);
+}
+
 int main(int argc, char *argv[]) {
     struct timeval T1, T2;
-    long delta_ms;
     gettimeofday(&T1, NULL); /* запомнить текущее время T1 */
 
     for (unsigned int i = 0; i < 100; i++) /* 100 экспериментов */
@@ -46,7 +50,6 @@ int main(int argc, char *argv[]) {
 
         // generate 1
         for (int j = 0; j < N; ++j) {
-
             m1[j] = (rand_r(&seedp) % (A * 100)) / 100.0 + 1;
         }
 
@@ -54,6 +57,7 @@ int main(int argc, char *argv[]) {
         for (int j = 0; j < N_2; ++j) {
             m2[j] = A + rand_r(&seedp) % (A * 9);
         }
+
         for (int j = 0; j < N_2; ++j) {
             m2_cpy[j] = m2[j];
         }
@@ -87,8 +91,6 @@ int main(int argc, char *argv[]) {
         printf("%f ", X);
     }
     gettimeofday(&T2, NULL);
-    /* запомнить текущее время T2 */
-    delta_ms = 1000 * (T2.tv_sec - T1.tv_sec) + (T2.tv_usec - T1.tv_usec) / 1000;
-    printf("\n%ld\n", delta_ms); /* T2 - T1 */
+    print_delta(T1, T2);
     return 0;
 }
