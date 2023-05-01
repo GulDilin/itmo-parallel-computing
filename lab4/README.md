@@ -8,7 +8,6 @@
 ```
 sudo apt-get update
 sudo apt-get install -y clang
-sudo apt-get install libomp-dev
 ```
 2. Установить `Python-3.10`
 3. Сборка эксперементальных билдов
