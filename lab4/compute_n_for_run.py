@@ -11,7 +11,7 @@ def find_n_for_exec_time(target: TargetDir, exec_time: int):
     n = n_start
     time = 0
     while True:
-        _, time = run(target, n_start, 1)
+        _, time = run(target, n_start, 0)
         if time > exec_time:
             n_end = n_start
             n_start = int(n_start / 2)
@@ -20,7 +20,7 @@ def find_n_for_exec_time(target: TargetDir, exec_time: int):
 
     while abs(exec_time - time) > threshold_ms:
         n = int((n_start + n_end) / 2)
-        _, time = run(target, n, 1)
+        _, time = run(target, n, 0)
         if time > exec_time:
             n_end = n
         else:

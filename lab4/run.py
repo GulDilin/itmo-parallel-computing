@@ -4,25 +4,33 @@ import argparse
 import matplotlib.pyplot as plt
 from build import TargetDir, LabPrefix
 
-
+#  SPEC FOR SET_NUM_THREADS https://www.openmp.org/spec-html/5.0/openmpse50.html#x289-20540006.2
 def run(
     target: TargetDir,
     n_size: int = 1,
     k: int = 0,
     ignore: bool = False,
-    lab_name: LabPrefix = LabPrefix.DEFAULT
+    lab_name: LabPrefix = LabPrefix.DEFAULT,
+    sort_threads: int = 2,
 ):
     env = ''
     if k == 0:
         lab_name = LabPrefix.NO_PARALLEL
     else:
-        env = f'OMP_NUM_THREADS={k} OMP_DYNAMIC=FALSE '
-    path = f'{env}./{target.value}/{lab_name} {n_size} {k}'
+        env = f'OMP_NUM_THREADS=2,{k} '
+    path = f'{env}./{target.value}/{lab_name} {n_size} {k} {sort_threads}'
     result = os.popen(path).read()
-    numbers, timing = result.split('\n')[:2]
+    print(path)
+    print(result)
+    print()
+    r = result.rsplit('\n')
+    r = [it for it in r if it and not it.startswith('PROGRESS')]
+    timing = r[-1]
+    r = r[:-1]
+    numbers = ''.join(r)
     if not ignore:
         print(f'{path} {timing}')
-    return numbers, int(timing)
+    return numbers, float(timing)
 
 
 def get_n_variants(config: dict, target: TargetDir):
@@ -66,10 +74,10 @@ def main(args):
             for n in n_variants:
                 for n_threads in k:
                     # prepend run
-                    for i in range(3):
-                        run(target, 100, n_threads, True)
+                    # for i in range(3):
+                    #     run(target, 100, n_threads, True, sort_threads=args.sort_threads)
 
-                    numbers, timing = run(target, n, n_threads, False)
+                    numbers, timing = run(target, n, n_threads, False, sort_threads=args.sort_threads)
                     results[target.name][n_threads].append(timing)
 
                     is_verified = args.local_config or numbers == verification.get(str(n), None)
@@ -87,12 +95,13 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     # k_variants = range(0, 17)
-    k_variants = [0, 1, 2, 3, 4, 8, 16, 32]
+    k_variants = [0]
     parser.add_argument('--n-threads', '-k', dest="k_variants", type=int, nargs="*", default=k_variants)
     parser.add_argument('--n-variants', dest="n_variants", type=int, nargs="*", default=None)
     parser.add_argument('--n-start', dest="n_start", type=int, default=None)
     parser.add_argument('--n-end', dest="n_end", type=int, default=None)
     parser.add_argument('--n-amount', dest="n_amount", type=int, default=10)
+    parser.add_argument('--sort-threads', dest="sort_threads", type=int, default=2)
     parser.add_argument('--local-config', dest="local_config", action="store_true", default=False)
     args = parser.parse_args()
     if args.n_start and args.n_end:
