@@ -34,6 +34,12 @@ void print_arr(double *array, int n) {
     printf("\n");
 }
 
+void print_arr_dbg(double *array, int n) {
+    #ifdef DEBUG
+        print_arr(array, n);
+    #endif
+}
+
 void sort_stupid(double *array, int n) {
     #ifdef DEBUG
         printf("sort stupid\n");
@@ -76,7 +82,7 @@ void copy_array(double *dst, double *src, int n) {
     }
 }
 
-inline void sort(double *array, int n, double *dst) {
+static inline void sort(double *array, int n, double *dst) {
     #ifdef DEBUG
         printf("sort\n");
         print_arr(array, n);
@@ -104,7 +110,7 @@ inline void sort(double *array, int n, double *dst) {
     #endif
 }
 
-inline void sort_dynamic(double *array, int n, double *dst, int n_threads) {
+static inline void sort_dynamic(double *array, int n, double *dst, int n_threads) {
     #ifdef DEBUG
         printf("sort_dynamic\n");
         print_arr(array, n);
@@ -215,36 +221,47 @@ int main(int argc, char *argv[]) {
                 }
                 #pragma omp parallel default(none) shared(N, N_2, A, m1, m2, m2_cpy, i, X, N_sort_threads)
                 {
+
+                    print_arr_dbg(m2, N_2);
                     #pragma omp for
                     for (int j = 0; j < N_2; ++j) {
                         m2_cpy[j] = m2[j];
                     }
+                    print_arr_dbg(m2_cpy, N_2);
                     // map
                     #pragma omp for
                     for (int j = 0; j < N; ++j) {
                         m1[j] = 1 / tanh(sqrt(m1[j]));
                     }
+                    print_arr_dbg(m1, N);
+
 
                     #pragma omp for
                     for (int j = 1; j < N_2; ++j) {
                         m2[j] = m2[j] + m2_cpy[j - 1];
                     }
+                    print_arr_dbg(m2, N_2);
 
                     #pragma omp for
-                    for (int j = 1; j < N_2; ++j) {
+                    for (int j = 0; j < N_2; ++j) {
                         m2[j] = pow(log10(m2[j]), M_E);
                     }
+                    print_arr_dbg(m2, N_2);
 
                     #pragma omp for
                     for (int j = 0; j < N_2; ++j) {
                         m2_cpy[j] = m2[j] > m1[j] ? m2[j] : m1[j] ;
                     }
+                    print_arr_dbg(m2_cpy, N_2);
+
 
                     if (N_sort_threads == 2) {
                         sort(m2_cpy, N_2, m2);
                     } else {
                         sort_dynamic(m2_cpy, N_2, m2, omp_get_num_procs());
                     }
+                    print_arr_dbg(m2, N_2);
+
 
                     int k = 0;
                     while (m2[k] == 0 && k < N_2 - 1) k++;
@@ -261,6 +278,8 @@ int main(int argc, char *argv[]) {
                         m2_cpy[j] = 0;
                         if((int)(m2[j] / m2_min) % 2 == 0) m2_cpy[j] = sin(m2[j]);
                     }
+                    print_arr_dbg(m2_cpy, N_2);
+
 
                     #pragma omp for reduction(+ : X)
                     for (int j = 0; j < N_2; ++j) {

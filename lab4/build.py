@@ -28,19 +28,19 @@ def build() -> None:
     for target in TargetDir:
         os.system(
             (
-                f'{target.name.lower()} -O3 -Wall -Werror main.c '
+                f'{target.name.lower()} -std=gnu11 -O3 -Wall -Werror main.c '
                 f'-o {target.value}/{LabPrefix.NO_PARALLEL} -lm -lgomp'
             )
         )
         os.system(
             (
-                f'{target.name.lower()} -O1 -Wall -Werror -fopenmp main.c '
+                f'{target.name.lower()} -std=gnu11 -O1 -Wall -Werror -fopenmp main.c '
                 f'-o {target.value}/{LabPrefix.DEFAULT} -lm -lgomp'
             )
         )
         os.system(
             (
-                f'{target.name.lower()} -O3 -Wall -Werror -fopenmp calc_additional_time.c '
+                f'{target.name.lower()} -std=gnu11 -O3 -Wall -Werror -fopenmp calc_additional_time.c '
                 f'-o {target.value}/{LabPrefix.ADDITIONAL} -lm -lgomp'
             )
         )

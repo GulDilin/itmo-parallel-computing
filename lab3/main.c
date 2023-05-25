@@ -50,7 +50,7 @@ int main(int argc, char *argv[]) {
         omp_set_num_threads(M);
     #endif
 
-    for (unsigned int i = 0; i < 100; i++) /* 100 экспериментов */
+    for (unsigned int i = 0; i < 1; i++) /* 100 экспериментов */
     {
         double X = 0;
         unsigned int seedp = i;
