@@ -17,6 +17,11 @@ void swap(double *a, double *b) {
     t = *a, *a = *b, *b = t;
 }
 
+double get_time() {
+    struct timeval t;
+    gettimeofday(&t, NULL);
+    return t.tv_sec + t.tv_usec / 1000000.0;
+}
 
 void print_arr(double *array, int n) {
     for (int i = 0; i < n; ++i)
@@ -214,15 +219,31 @@ double sum_reduce(double x, void * arg) {
     return (* acc) + x;
 }
 
+struct progress_arg {
+    volatile int * progress;
+    volatile int * is_finished;
+};
+
+void* progress_routine(void * arg) {
+    struct progress_arg *data = arg;
+    double time = 0;
+    while (*(data -> is_finished) < 1) {
+        double time_temp = get_time();
+        if (time_temp - time < 1) {
+            usleep(100);
+            continue;
+        };
+        printf("\nPROGRESS: %d\n", *(data -> progress));
+        time = time_temp;
+    }
+    pthread_exit(0);
+}
+
 int main(int argc, char *argv[]) {
     struct timeval T1, T2;
     gettimeofday(&T1, NULL);
 
-    int finished = 0;
-    int i = 0;
-
     const int N = atoi(argv[1]); /* N - array size, equals first cmd param */
-    // const int N_sort_threads = argc > 3 ? atoi(argv[3]) : 2;
 
     const int N_2 = N / 2;
     const int A = 280;
@@ -232,6 +253,15 @@ int main(int argc, char *argv[]) {
     double * restrict m2_cpy = malloc(N_2 * sizeof(double));
 
     const int M = atoi(argv[2]); /* M - amount of threads */
+
+    volatile int i = 0;
+    volatile int is_finished = 0;
+
+    pthread_t thread_progress;
+    struct progress_arg arg_progress;
+    arg_progress.progress = &i;
+    arg_progress.is_finished = &is_finished;
+    pthread_create(&thread_progress, NULL, progress_routine, &arg_progress);
 
     for (i = 0; i < 100; i++) /* 100 экспериментов */
     {
@@ -302,7 +332,10 @@ int main(int argc, char *argv[]) {
 
         printf("%f ", X);
     }
-    finished = 1;
+
+    is_finished = 1;
+    pthread_join(thread_progress, NULL);
+
     gettimeofday(&T2, NULL);
     print_delta(T1, T2);
     return 0;

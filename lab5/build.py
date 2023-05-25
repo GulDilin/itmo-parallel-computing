@@ -11,8 +11,8 @@ class TargetDir(str, Enum):
 
 class LabPrefix(str, Enum):
     DEFAULT = 'lab-5'
-    NO_PARALLEL = 'lab-4-no-parallel'
-    ADDITIONAL = 'lab-4-add'
+    # NO_PARALLEL = 'lab-4-no-parallel'
+    # ADDITIONAL = 'lab-4-add'
 
 
 def clear():

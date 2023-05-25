@@ -81,6 +81,8 @@ def main(args):
                     results[target.name][n_threads].append(timing)
 
                     is_verified = args.local_config or numbers == verification.get(str(n), None)
+                    if args.local_config and n_threads == 0:
+                        verification[n] = numbers
                     print('verified' if is_verified else 'failed verification')
                     print(timing)
 
@@ -90,6 +92,9 @@ def main(args):
 
     with open('./assets/results.json', 'w') as f:
         json.dump(results, f)
+    if args.local_config:
+        with open('./assets/verification.json', 'w') as f:
+            json.dump(verification, f)
 
 
 if __name__ == '__main__':
