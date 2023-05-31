@@ -11,6 +11,7 @@
 #define min(a,b) (((a) < (b)) ? (a) : (b))
 #define max(a,b) (((a) > (b)) ? (a) : (b))
 // #define DEBUG 1
+#define BENCHMARK 1
 
 struct map_data {
     double * src;
@@ -32,6 +33,8 @@ struct threads_info {
     int n_threads;
     sem_t * sems_begin;
     sem_t * sems_end;
+    double *  benchmarking_results;
+    double *  benchmarking_time;
 };
 
 struct thread_arg {
@@ -303,6 +306,45 @@ void* progress_routine(void * arg) {
     pthread_exit(0);
 }
 
+// --------------- BENCHMARK
+
+void init_benchmarks(volatile struct threads_info * t_info, int n) {
+    #ifdef BENCHMARK
+        t_info -> benchmarking_time = malloc(n * sizeof(double));
+        t_info -> benchmarking_results = malloc(n * sizeof(double));
+        for (int i = 0; i < n; ++i) {
+            t_info -> benchmarking_results[i] = 0;
+        }
+    #endif
+}
+
+void start_benchmark(volatile struct threads_info * t_info, int idx) {
+    #ifdef BENCHMARK
+        t_info -> benchmarking_time[idx] = get_time();
+    #endif
+}
+
+void finish_benchmark(volatile struct threads_info * t_info, int idx) {
+    #ifdef BENCHMARK
+        t_info -> benchmarking_results[idx] += get_time() - t_info -> benchmarking_time[idx];
+    #endif
+}
+
+void show_benchmark_results(volatile struct threads_info * t_info, int n) {
+    #ifdef BENCHMARK
+        printf("\n\nBENCHMARK\n");
+        for (int i = 0; i < n; ++i) {
+            printf("%f\n", t_info -> benchmarking_results[i] * 1000);
+        }
+        printf("\n");
+        free(t_info -> benchmarking_time);
+        free(t_info -> benchmarking_results);
+    #endif
+}
+
+// --------------- BENCHMARK END
+
+
 int main(int argc, char *argv[]) {
     struct timeval T1, T2;
     gettimeofday(&T1, NULL);
@@ -331,38 +373,55 @@ int main(int argc, char *argv[]) {
 
     init_threads(&t_info, &is_finished);
 
+    int N_benchmarks = 4;
+    init_benchmarks(&t_info, N_benchmarks);
+
     for (i = 0; i < 100; i++) /* 100 экспериментов */
     {
         double X = 0;
         unsigned int seedp = i;
 
+        // generate
+        start_benchmark(&t_info, 0);
         for (int j = 0; j < N; ++j) {
             m1[j] = (rand_r(&seedp) % (A * 100)) / 100.0 + 1;
         }
         for (int j = 0; j < N_2; ++j) {
             m2[j] = A + rand_r(&seedp) % (A * 9);
         }
+        finish_benchmark(&t_info, 0);
 
+        start_benchmark(&t_info, 1);
+        // count ctanh from sqrt of x
         parallel_separate(copy, map_routine, m2, m2_cpy, NULL, 0, N_2, &t_info);
         parallel_separate(ctanh_sqrt, map_routine, m1, m1, NULL, 0, N, &t_info);
 
+        // sum with previous
+        start_benchmark(&t_info, 2);
         struct arg_src2 * restrict args_sum = malloc(N_2 * sizeof(struct arg_src2));
         args_sum[0].src2 = 0;
         for (int j = 1; j < N_2; ++j) {
             args_sum[j].src2 = m2_cpy[j - 1];
         }
-
         parallel_separate(sum_prev, map_routine, m2, m2, args_sum, sizeof(struct arg_src2), N_2, &t_info);
+        // count log10(x) ^ E
         parallel_separate(pow_log10, map_routine, m2, m2, NULL, 0, N_2, &t_info);
 
+        // max between m1 and m2 per item
         struct arg_src2 * args_max = malloc(N_2 * sizeof(struct arg_src2));
         for (int j = 0; j < N_2; ++j) {
             args_sum[j].src2 = m1[j];
         }
         parallel_separate(get_max, map_routine, m2, m2_cpy, args_max, sizeof(struct arg_src2), N_2, &t_info);
+        finish_benchmark(&t_info, 1);
 
+        // sorting
+        start_benchmark(&t_info, 2);
         sort_dynamic(m2_cpy, N_2, m2, &t_info);
+        finish_benchmark(&t_info, 2);
 
+        // reduce
+        start_benchmark(&t_info, 3);
         int k = 0;
         while (m2[k] == 0 && k < N_2 - 1) k++;
         double m2_min = m2[k];
@@ -375,11 +434,13 @@ int main(int argc, char *argv[]) {
         parallel_separate(map_sin, map_routine, m2, m2_cpy, args_sin_min, sizeof(struct arg_src2), N_2, &t_info);
         parallel_separate(sum_reduce, reduce_routine, m2_cpy, &X, NULL, 0, N_2, &t_info);
         printf("%f ", X);
+        finish_benchmark(&t_info, 3);
     }
 
     is_finished = 1;
     join_threads(&t_info);
     pthread_join(thread_progress, NULL);
+    show_benchmark_results(&t_info, N_benchmarks);
 
     gettimeofday(&T2, NULL);
     print_delta(T1, T2);

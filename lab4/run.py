@@ -1,6 +1,7 @@
 import json
 import os
 import argparse
+from typing import Optional
 import matplotlib.pyplot as plt
 from build import TargetDir, LabPrefix
 
@@ -24,13 +25,21 @@ def run(
     print(result)
     print()
     r = result.rsplit('\n')
-    r = [it for it in r if it and not it.startswith('PROGRESS')]
-    timing = r[-1]
-    r = r[:-1]
-    numbers = ''.join(r)
+    r = [it for it in r if not it.startswith('PROGRESS')]
+    timing = r[-2]
+    numbers_s = r[:-2]
+    benchmarks = []
+    bench_start_id = r.index('BENCHMARK')
+    if bench_start_id:
+        numbers_s = r[:bench_start_id]
+        benchmarks_s = r[bench_start_id + 1:]
+        benchmarks = benchmarks_s[:benchmarks_s.index('')]
+
+    numbers_s = [it for it in numbers_s if it]
+    numbers = ''.join(numbers_s)
     if not ignore:
         print(f'{path} {timing}')
-    return numbers, float(timing)
+    return numbers, float(timing), benchmarks
 
 
 def get_n_variants(config: dict, target: TargetDir):
@@ -40,11 +49,13 @@ def get_n_variants(config: dict, target: TargetDir):
     return n_variants
 
 
-def plt_save(target: TargetDir, n_variants: list, results: dict, postfix: str = 'results'):
+def plt_save(target: TargetDir, n_variants: list, results: dict, postfix: str = 'results', ylim: Optional[list] = None):
     for i in results[target.name]:
         print(f'{results[target.name][i]=}\n{n_variants=}')
         plt.plot(n_variants, results[target.name][i], label=f"parall {i}")
 
+    if ylim:
+        plt.ylim(ylim)
     plt.xlabel('N')
     plt.ylabel('Exec ms')
     plt.legend()
@@ -71,13 +82,11 @@ def main(args):
             for n_threads in k:
                 results[target.name][n_threads] = []
 
-            for n in n_variants:
-                for n_threads in k:
-                    # prepend run
-                    # for i in range(3):
-                    #     run(target, 100, n_threads, True, sort_threads=args.sort_threads)
-
-                    numbers, timing = run(target, n, n_threads, False, sort_threads=args.sort_threads)
+            for n_threads in k:
+                benchmarks_total = []
+                for n in n_variants:
+                    numbers, timing, benchmarks = run(target, n, n_threads, False, sort_threads=args.sort_threads)
+                    benchmarks_total.append(benchmarks)
                     results[target.name][n_threads].append(timing)
 
                     is_verified = args.local_config or numbers == verification.get(str(n), None)
@@ -85,6 +94,10 @@ def main(args):
                         verification[n] = numbers
                     print('verified' if is_verified else 'failed verification')
                     print(timing)
+                print(f'BENCHMARK RESULTS: {n_threads}')
+                for col in range(len(benchmarks_total[0])):
+                    print(','.join([benchmarks_total[row][col] for row in range(len(benchmarks_total))]))
+                print()
 
             plt_save(target, n_variants, results)
     except KeyboardInterrupt:
@@ -100,7 +113,7 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     # k_variants = range(0, 17)
-    k_variants = [0]
+    k_variants = [2, 3, 4, 8, 16]
     parser.add_argument('--n-threads', '-k', dest="k_variants", type=int, nargs="*", default=k_variants)
     parser.add_argument('--n-variants', dest="n_variants", type=int, nargs="*", default=None)
     parser.add_argument('--n-start', dest="n_start", type=int, default=None)

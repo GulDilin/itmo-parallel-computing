@@ -8,6 +8,7 @@
 
 #define min(a,b) (((a) < (b)) ? (a) : (b))
 // #define DEBUG 1
+#define BENCHMARK 1
 
 #ifdef _OPENMP
     // here omp_get_num_procs implementation exists
@@ -110,7 +111,7 @@ static inline void sort(double *array, int n, double *dst) {
     #endif
 }
 
-static inline void sort_dynamic(double *array, int n, double *dst, int n_threads) {
+void sort_dynamic(double *array, int n, double *dst, int n_threads) {
     #ifdef DEBUG
         printf("sort_dynamic\n");
         print_arr(array, n);
@@ -162,6 +163,56 @@ void print_delta(double T1, double T2) {
     printf("\n%f", (T2 - T1) * 1000.0);
 }
 
+// --------------- BENCHMARK
+
+struct benchmarks_info {
+    double * restrict benchmarking_results;
+    double * restrict benchmarking_time;
+};
+
+void init_benchmarks(volatile struct benchmarks_info * t_info, int n) {
+    #ifdef BENCHMARK
+        t_info -> benchmarking_time = malloc(n * sizeof(double));
+        t_info -> benchmarking_results = malloc(n * sizeof(double));
+        for (int i = 0; i < n; ++i) {
+            t_info -> benchmarking_results[i] = 0;
+        }
+    #endif
+}
+
+void start_benchmark(volatile struct benchmarks_info * t_info, int idx) {
+    #pragma omp single
+    {
+        #ifdef BENCHMARK
+            t_info -> benchmarking_time[idx] = omp_get_wtime();
+        #endif
+    }
+}
+
+void finish_benchmark(volatile struct benchmarks_info * t_info, int idx) {
+    #pragma omp single
+    {
+        #ifdef BENCHMARK
+            t_info -> benchmarking_results[idx] += omp_get_wtime() - t_info -> benchmarking_time[idx];
+        #endif
+    }
+}
+
+void show_benchmark_results(volatile struct benchmarks_info * t_info, int n) {
+    #ifdef BENCHMARK
+        printf("\n\nBENCHMARK\n");
+        for (int i = 0; i < n; ++i) {
+            printf("%f\n", t_info -> benchmarking_results[i] * 1000);
+        }
+        printf("\n");
+        free(t_info -> benchmarking_time);
+        free(t_info -> benchmarking_results);
+    #endif
+}
+
+// --------------- BENCHMARK END
+
+
 int main(int argc, char *argv[]) {
     double T1, T2;
     T1 = omp_get_wtime();
@@ -189,6 +240,10 @@ int main(int argc, char *argv[]) {
 
         #pragma omp section
         {
+            volatile struct benchmarks_info t_info;
+            int N_benchmarks = 4;
+            init_benchmarks(&t_info, N_benchmarks);
+
             const int N = atoi(argv[1]); /* N - array size, equals first cmd param */
             const int N_sort_threads = argc > 3 ? atoi(argv[3]) : 2;
 
@@ -208,61 +263,65 @@ int main(int argc, char *argv[]) {
             for (i = 0; i < 100; i++) /* 100 экспериментов */
             {
                 double X = 0;
-                unsigned int seedp = i;
 
+                // generate
 
-                for (int j = 0; j < N; ++j) {
-                    m1[j] = (rand_r(&seedp) % (A * 100)) / 100.0 + 1;
-                }
-
-                // generate 2
-                for (int j = 0; j < N_2; ++j) {
-                    m2[j] = A + rand_r(&seedp) % (A * 9);
-                }
-                #pragma omp parallel default(none) shared(N, N_2, A, m1, m2, m2_cpy, i, X, N_sort_threads)
+                #pragma omp parallel default(none) shared(N, N_2, A, m1, m2, m2_cpy, i, X, N_sort_threads, t_info)
                 {
+                    start_benchmark(&t_info, 0);
+                    #pragma omp single
+                    {
+                        unsigned int seedp = i;
+                        for (int j = 0; j < N; ++j) {
+                            m1[j] = (rand_r(&seedp) % (A * 100)) / 100.0 + 1;
+                        }
+                        for (int j = 0; j < N_2; ++j) {
+                            m2[j] = A + rand_r(&seedp) % (A * 9);
+                        }
+                    }
+                    finish_benchmark(&t_info, 0);
 
-                    print_arr_dbg(m2, N_2);
+                    // count ctanh from sqrt of x
+                    start_benchmark(&t_info, 1);
                     #pragma omp for
                     for (int j = 0; j < N_2; ++j) {
                         m2_cpy[j] = m2[j];
                     }
-                    print_arr_dbg(m2_cpy, N_2);
-                    // map
                     #pragma omp for
                     for (int j = 0; j < N; ++j) {
                         m1[j] = 1 / tanh(sqrt(m1[j]));
                     }
-                    print_arr_dbg(m1, N);
 
-
+                    // sum with previous
                     #pragma omp for
                     for (int j = 1; j < N_2; ++j) {
                         m2[j] = m2[j] + m2_cpy[j - 1];
                     }
-                    print_arr_dbg(m2, N_2);
 
+                    // count log10(x) ^ E
                     #pragma omp for
                     for (int j = 0; j < N_2; ++j) {
                         m2[j] = pow(log10(m2[j]), M_E);
                     }
-                    print_arr_dbg(m2, N_2);
 
+                    // max between m1 and m2 per item
                     #pragma omp for
                     for (int j = 0; j < N_2; ++j) {
                         m2_cpy[j] = m2[j] > m1[j] ? m2[j] : m1[j] ;
                     }
-                    print_arr_dbg(m2_cpy, N_2);
+                    finish_benchmark(&t_info, 1);
 
-
+                    // sort
+                    start_benchmark(&t_info, 2);
                     if (N_sort_threads == 2) {
                         sort(m2_cpy, N_2, m2);
                     } else {
                         sort_dynamic(m2_cpy, N_2, m2, omp_get_num_procs());
                     }
-                    print_arr_dbg(m2, N_2);
+                    finish_benchmark(&t_info, 2);
 
 
+                    start_benchmark(&t_info, 3);
                     int k = 0;
                     while (m2[k] == 0 && k < N_2 - 1) k++;
                     double m2_min = m2[k];
@@ -278,8 +337,6 @@ int main(int argc, char *argv[]) {
                         m2_cpy[j] = 0;
                         if((int)(m2[j] / m2_min) % 2 == 0) m2_cpy[j] = sin(m2[j]);
                     }
-                    print_arr_dbg(m2_cpy, N_2);
-
 
                     #pragma omp for reduction(+ : X)
                     for (int j = 0; j < N_2; ++j) {
@@ -287,11 +344,13 @@ int main(int argc, char *argv[]) {
                     }
 
                     #pragma omp barrier
+                    finish_benchmark(&t_info, 3);
 
                 }
                 printf("%f ", X);
             }
             finished = 1;
+            show_benchmark_results(&t_info, N_benchmarks);
         }
     }
     T2 = omp_get_wtime();
