@@ -1,6 +1,7 @@
 import json
 import os
 import argparse
+from typing import Optional
 import matplotlib.pyplot as plt
 from build import TargetDir, LabPrefix
 
@@ -43,17 +44,18 @@ def get_n_variants(config: dict, target: TargetDir):
     return n_variants
 
 
-def plt_save(target: TargetDir, n_variants: list, results: dict, postfix: str = 'results'):
+def plt_save(target: TargetDir, n_variants: list, results: dict, postfix: str = 'results', ylim: Optional[list] = None):
     for i in results[target.name]:
         print(f'{results[target.name][i]=}\n{n_variants=}')
         plt.plot(n_variants, results[target.name][i], label=f"parall {i}")
 
+    if ylim:
+        plt.ylim(ylim)
     plt.xlabel('N')
     plt.ylabel('Exec ms')
     plt.legend()
     plt.savefig(f'./assets/{target.name}_{postfix}.png')
     plt.clf()
-
 
 def main(args):
     k = args.k_variants
