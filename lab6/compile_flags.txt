@@ -1,1 +1,2 @@
--I"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1\include"
+-I
+D:\tool\OpenCL\include

@@ -1,7 +1,8 @@
 import os
 import shutil
 from enum import Enum
-
+import argparse
+import platform
 
 class TargetDir(str, Enum):
     # GCC = 'target-gcc'
@@ -24,7 +25,7 @@ def clear():
         os.mkdir(v.value)
 
 
-def build() -> None:
+def build(args) -> None:
     for target in TargetDir:
         # os.system(
         #     (
@@ -40,23 +41,44 @@ def build() -> None:
         #     )
         # )
                 # 'LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu/:$LD_LIBRARY_PATH '
-        CUDA_PATH = r'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1'
-        os.system(
-            (
-                rf'{target.name.lower()} '
-                rf' --cuda-path="{CUDA_PATH}" '
-                rf'-L"{CUDA_PATH}\lib\x64" '
-                rf'-I"{CUDA_PATH}\include" '
-                'main.c '
-                f'-o {target.value}/{LabPrefix.DEFAULT}.exe '
-                '-lOpenCL'
+        print(platform.system())
+        suffix = '.exe' if platform.system() == 'Windows' else ''
+        if (args.mode == 'CUDA'):
+            os.system(
+                (
+                    rf'{target.name.lower()} '
+                    rf' --cuda-path="{args.cuda_path}" '
+                    rf'-L"{args.cuda_path}\lib\x64" '
+                    rf'-I"{args.cuda_path}\include" '
+                    'main.c '
+                    f'-o {target.value}/{LabPrefix.DEFAULT}{suffix} '
+                    '-lOpenCL'
+                )
             )
-        )
+        else:
+            os.system(
+                (
+                    rf'{target.name.lower()} '
+                    rf'-L"{args.ocl_path}\lib" '
+                    rf'-I"{args.ocl_path}\include" '
+                    'main.c '
+                    f'-o {target.value}/{LabPrefix.DEFAULT}{suffix} '
+                    '-lOpenCL'
+                )
+            )
 
 
 def main():
+    CUDA_PATH = r'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1'
+    OPENCL_SDK_PATH = r'D:\tool\OpenCL'
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--mode', '-m', dest="mode", type=str, choices=('CUDA', 'AMD'), required=True)
+    parser.add_argument('--cuda-path', dest="cuda_path", type=str, default=CUDA_PATH)
+    parser.add_argument('--ocl-path', dest="ocl_path", type=str, default=OPENCL_SDK_PATH)
+    args = parser.parse_args()
+
     clear()
-    build()
+    build(args)
 
 
 if __name__ == '__main__':

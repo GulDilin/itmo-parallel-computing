@@ -1,18 +1,60 @@
 #define CL_TARGET_OPENCL_VERSION 120
 #define CL_USE_DEPRECATED_OPENCL_1_2_APIS
 #include <CL/cl.h>
+#pragma warning (disable : 4996)
 #include <stdio.h>
 
-#define NWITEMS 512
-// A simple memset kernel
-const char *source =
-"kernel void memset(   global uint *dst )             \n"
-"{                                                    \n"
-"    dst[get_global_id(0)] = get_global_id(0);        \n"
-"}                                                    \n";
 
-int main(int argc, char ** argv)
-{
+#define NWITEMS 512
+
+void read_source(char *buffer) {
+}
+
+// void read_source(char *buffer) {
+//   FILE *fp;
+//   long lSize;
+
+//   fp = fopen("compute.cl", "rb");
+//   if (!fp) perror("blah.txt"), exit(1);
+
+//   fseek( fp , 0L , SEEK_END);
+//   lSize = ftell(fp);
+//   rewind(fp);
+
+//   /* allocate memory for entire content */
+//   buffer = calloc(1, lSize + 1);
+//   if( !buffer ) fclose(fp), fputs("memory alloc fails", stderr), exit(1);
+
+//   /* copy the file into the buffer */
+//   if( 1 != fread(buffer, lSize, 1, fp) ) {
+//     fclose(fp), free(buffer), fputs("entire read fails", stderr), exit(1);
+//   }
+//   fclose(fp);
+// }
+
+
+int main(int argc, char ** argv) {
+  /* Read source to char buffer */
+  FILE *fp;
+  long lSize;
+
+  fp = fopen("compute.cl", "rb");
+  if (!fp) perror("blah.txt"), exit(1);
+
+  fseek( fp , 0L , SEEK_END);
+  lSize = ftell(fp);
+  rewind(fp);
+
+  /* allocate memory for entire content */
+  const char * source = calloc(1, lSize + 1);
+  if( !source ) fclose(fp), fputs("memory alloc fails", stderr), exit(1);
+
+  /* copy the file into the source */
+  if( 1 != fread((void *)source, lSize, 1, fp) ) {
+    fclose(fp), free((void *)source), fputs("entire read fails", stderr), exit(1);
+  }
+  fclose(fp);
+
   cl_int err;
   cl_platform_id platform = 0;
   cl_device_id device = 0;
@@ -22,7 +64,6 @@ int main(int argc, char ** argv)
   cl_mem bufSA, bufSB, bufC, bufS;
   cl_event event = NULL;
   int ret = 0;
-  // 1. Get a platform.
 
   /* Setup OpenCL environment. */
   err = clGetPlatformIDs(1, &platform, NULL);
@@ -37,18 +78,12 @@ int main(int argc, char ** argv)
       return 1;
   }
 
-  printf("cl_device_id %d\n", device);
-
   props[1] = (cl_context_properties)platform;
-  for (int i = 0; i < 3; ++i) {
-    printf("properties[%d] = %ld", i, props[i]);
-  }
   ctx = clCreateContext(props, 1, &device, NULL, NULL, &err);
   if (err != CL_SUCCESS) {
       printf( "clCreateContext() failed with %d\n", err );
       return 1;
   }
-  printf("context %d\n", ctx);
 
   queue = clCreateCommandQueue(ctx, device, 0, &err);
   if (err != CL_SUCCESS) {
@@ -56,7 +91,7 @@ int main(int argc, char ** argv)
       clReleaseContext(ctx);
       return 1;
   }
-  printf("cl_command_queue %d\n", queue);
+
   // 4. Perform runtime source compilation, and obtain kernel entry point.
   cl_program program = clCreateProgramWithSource(ctx, 1, &source, NULL, &err );
 
@@ -73,10 +108,7 @@ int main(int argc, char ** argv)
   cl_kernel kernel = clCreateKernel( program, "memset", NULL );
 
   // 5. Create a data buffer.
-  cl_mem buffer = clCreateBuffer( ctx,
-                                  CL_MEM_WRITE_ONLY,
-                                  NWITEMS * sizeof(cl_uint),
-                                  NULL, NULL );
+  cl_mem buffer = clCreateBuffer(ctx, CL_MEM_WRITE_ONLY, NWITEMS * sizeof(cl_uint), NULL, NULL );
 
   // 6. Launch the kernel. Let OpenCL pick the local work size.
   size_t global_work_size = NWITEMS;
