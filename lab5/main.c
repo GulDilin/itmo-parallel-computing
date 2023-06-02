@@ -12,6 +12,8 @@
 #define max(a,b) (((a) > (b)) ? (a) : (b))
 // #define DEBUG 1
 #define BENCHMARK 1
+// #define SHEDULE_DYNAMIC 1
+#define CHUNK_SIZE 512
 
 struct map_data {
     double * src;
@@ -158,7 +160,9 @@ void * thread_routine(void * arg) {
         sem_wait( (t_arg -> t_info -> sems_begin) + (t_arg -> t_id) );
         if ( *(t_arg -> is_finished) > 0 ) break;
         void (*routine_ptr)(void*) = t_arg -> routine;
-        (*routine_ptr)(t_arg -> data);
+        if (t_arg -> routine != NULL) {
+            (*routine_ptr)(t_arg -> data);
+        }
         sem_post(  (t_arg -> t_info -> sems_end) + (t_arg -> t_id)  );
     }
     pthread_exit(0);
@@ -204,7 +208,12 @@ void parallel_separate(
     volatile struct threads_info * t_info
 ) {
     struct map_data * restrict map_datas = malloc(t_info -> n_threads * sizeof(struct map_data));
-    int n_chunk = t_info -> n_threads < 2 ? n : ceil((double) n / t_info -> n_threads);
+    #ifdef SHEDULE_DYNAMIC
+        int n_chunk = CHUNK_SIZE;
+    #else
+        int n_chunk = t_info -> n_threads < 2 ? n : ceil((double) n / t_info -> n_threads);
+    #endif
+    int n_done = 0;
 
     double * restrict reduce_dst;
     if (routine == reduce_routine) {
@@ -212,21 +221,60 @@ void parallel_separate(
         fill_array(reduce_dst, t_info -> n_threads, 0);
     }
 
-    for (int i = 0; i < t_info -> n_threads; ++i) {
-        int n_done = n_chunk * i;
-        int n_cur_chunk = max(min((n - n_done), n_chunk), 0);
-        map_datas[i].callback = callback;
-        map_datas[i].src = src + n_done;
-        map_datas[i].args = args + n_done * arg_size;
-        map_datas[i].arg_size = arg_size;
-        map_datas[i].dst = routine == reduce_routine ? reduce_dst : dst + n_done;
-        map_datas[i].length = n_cur_chunk;
-        map_datas[i].n_start = n_done;
 
-        (t_info -> thread_args + i) -> data = map_datas + i;
-        (t_info -> thread_args + i) -> routine = routine;
-        sem_post(t_info -> sems_begin + i);
+    #ifdef SHEDULE_DYNAMIC
+        int max_t_id = -1;
+        for (int i = 0; i < t_info -> n_threads; ++i) {
+            (t_info -> thread_args + i) -> routine = NULL;
+            sem_post(t_info -> sems_end + i);
+        }
+    #else
+        int t_id = 0;
+    #endif
+
+    #ifdef SHEDULE_DYNAMIC
+        while (n_done < n)
+    #else
+        while (t_id < t_info -> n_threads)
+    #endif
+    {
+        int n_cur_chunk = max(min((n - n_done), n_chunk), 0);
+
+        #ifdef SHEDULE_DYNAMIC
+            int t_id = 0;
+            while (1) {
+                if (sem_trywait(t_info -> sems_end + t_id) == 0) break;
+                t_id = (t_id + 1) % t_info -> n_threads;
+                usleep(100);
+            }
+            max_t_id = max(max_t_id, t_id);
+        #endif
+
+        map_datas[t_id].callback = callback;
+        map_datas[t_id].src = src + n_done;
+        map_datas[t_id].args = args + n_done * arg_size;
+        map_datas[t_id].arg_size = arg_size;
+        map_datas[t_id].dst = routine == reduce_routine ? reduce_dst : dst + n_done;
+        map_datas[t_id].length = n_cur_chunk;
+        map_datas[t_id].n_start = n_done;
+
+        (t_info -> thread_args + t_id) -> data = map_datas + t_id;
+        (t_info -> thread_args + t_id) -> routine = routine;
+
+        n_done += n_cur_chunk;
+        sem_post(t_info -> sems_begin + t_id);
+
+        #ifdef SHEDULE_DYNAMIC
+        #else
+            t_id++;
+        #endif
     }
+    #ifdef SHEDULE_DYNAMIC
+        for (int i = max_t_id + 1; i < t_info -> n_threads; ++i) {
+            (t_info -> thread_args + i) -> routine = NULL;
+            sem_post(t_info -> sems_begin + i);
+        }
+    #endif
 
     for (int i = 0; i < t_info -> n_threads; ++i) {
         sem_wait(t_info -> sems_end + i);
@@ -406,6 +454,7 @@ int main(int argc, char *argv[]) {
         parallel_separate(sum_prev, map_routine, m2, m2, args_sum, sizeof(struct arg_src2), N_2, &t_info);
         // count log10(x) ^ E
         parallel_separate(pow_log10, map_routine, m2, m2, NULL, 0, N_2, &t_info);
+        free(args_sum);
 
         // max between m1 and m2 per item
         struct arg_src2 * args_max = malloc(N_2 * sizeof(struct arg_src2));
@@ -414,6 +463,7 @@ int main(int argc, char *argv[]) {
         }
         parallel_separate(get_max, map_routine, m2, m2_cpy, args_max, sizeof(struct arg_src2), N_2, &t_info);
         finish_benchmark(&t_info, 1);
+        free(args_max);
 
         // sorting
         start_benchmark(&t_info, 2);
@@ -435,6 +485,7 @@ int main(int argc, char *argv[]) {
         parallel_separate(sum_reduce, reduce_routine, m2_cpy, &X, NULL, 0, N_2, &t_info);
         printf("%f ", X);
         finish_benchmark(&t_info, 3);
+        free(args_sin_min);
     }
 
     is_finished = 1;
@@ -444,5 +495,9 @@ int main(int argc, char *argv[]) {
 
     gettimeofday(&T2, NULL);
     print_delta(T1, T2);
+
+    free(m1);
+    free(m2);
+    free(m2_cpy);
     return 0;
 }
