@@ -82,26 +82,13 @@ int main(int argc, char ** argv)
   size_t global_work_size = NWITEMS;
   clSetKernelArg(kernel, 0, sizeof(buffer), (void*) &buffer);
 
-  clEnqueueNDRangeKernel( queue,
-                          kernel,
-                          1,
-                          NULL,
-                          &global_work_size,
-                          NULL,
-                          0,
-                          NULL, NULL);
+  clEnqueueNDRangeKernel(queue, kernel, 1, NULL, &global_work_size, NULL, 0, NULL, NULL);
 
   clFinish( queue );
 
   // 7. Look at the results via synchronous buffer map.
   cl_uint *ptr;
-  ptr = (cl_uint *) clEnqueueMapBuffer( queue,
-                                        buffer,
-                                        CL_TRUE,
-                                        CL_MAP_READ,
-                                        0,
-                                        NWITEMS * sizeof(cl_uint),
-                                        0, NULL, NULL, NULL );
+  ptr = (cl_uint *) clEnqueueMapBuffer(queue, buffer, CL_TRUE, CL_MAP_READ, 0, NWITEMS * sizeof(cl_uint), 0, NULL, NULL, NULL );
 
   int i;
 

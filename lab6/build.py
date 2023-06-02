@@ -39,31 +39,19 @@ def build() -> None:
         #         f'-o {target.value}/{LabPrefix.DEFAULT} -lOpenCL'
         #     )
         # )
+                # 'LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu/:$LD_LIBRARY_PATH '
+        CUDA_PATH = r'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1'
         os.system(
             (
-                'LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu/:$LD_LIBRARY_PATH '
-                f'{target.name.lower()} -L/usr/lib/x86_64-linux-gnu main.c '
-                f'-o {target.value}/{LabPrefix.DEFAULT} -lOpenCL'
+                rf'{target.name.lower()} '
+                rf' --cuda-path="{CUDA_PATH}" '
+                rf'-L"{CUDA_PATH}\lib\x64" '
+                rf'-I"{CUDA_PATH}\include" '
+                'main.c '
+                f'-o {target.value}/{LabPrefix.DEFAULT}.exe '
+                '-lOpenCL'
             )
         )
-        # os.system(
-        #     (
-        #         f'{target.name.lower()} '
-        #         f'-o {target.value}/{LabPrefix.DEFAULT} {target.value}/{LabPrefix.DEFAULT}.o -lOpenCL -L$ROCMOPENCL/lib/x86_64'
-        #     )
-        # )
-        # os.system(
-        #     (
-        #         f'{target.name.lower()} -O1 -Wall -Werror -fopenmp main.c '
-        #         f'-o {target.value}/{LabPrefix.DEFAULT} -lm -lgomp'
-        #     )
-        # )
-        # os.system(
-        #     (
-        #         f'{target.name.lower()} -O3 -Wall -Werror -fopenmp calc_additional_time.c '
-        #         f'-o {target.value}/{LabPrefix.ADDITIONAL} -lm -lgomp'
-        #     )
-        # )
 
 
 def main():
