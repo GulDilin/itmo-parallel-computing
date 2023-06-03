@@ -9,8 +9,8 @@
 #include <sys/timeb.h>
 
 // #define DEBUG 1
-#define NWITEMS 10
 #define SOURCE_NAME "compute.cl"
+
 
 void print_err_code(cl_int * err) {
   switch (*err) {
@@ -104,6 +104,7 @@ void print_buffer(
   #endif
 }
 
+
 double get_time() {
   struct timeb result;
   ftime(&result);
@@ -112,9 +113,9 @@ double get_time() {
 
 // --------------- PRINTS END
 
-
 void run_kernel(
   const char * kernel_name,
+  cl_kernel kernel,
   cl_context *ctx,
   cl_program *program,
   cl_command_queue *queue,
@@ -123,9 +124,6 @@ void run_kernel(
   ...
 ) {
   cl_int err = CL_SUCCESS;
-  cl_kernel kernel = clCreateKernel( *program, kernel_name, &err );
-  print_err(ctx, &err, "clCreateKernel()", kernel_name);
-
   va_list valist;
   va_start(valist, n_args);
   err = CL_SUCCESS;
@@ -136,6 +134,7 @@ void run_kernel(
   }
   va_end(valist);
   print_err(ctx, &err, "clSetKernelArg()", kernel_name);
+
   size_t global_work_size = n;
   err = clEnqueueNDRangeKernel(*queue, kernel, 1, NULL, &global_work_size, NULL, 0, NULL, NULL);
   print_err(ctx, &err, "clEnqueueNDRangeKernel()", kernel_name);
@@ -174,6 +173,7 @@ void merge_sorted(
   cl_context *ctx,
   cl_program *program,
   cl_command_queue *queue,
+  cl_kernel merge_sorted_kernel,
   cl_mem *src,
   cl_mem *temp,
   int * src_offset_host,
@@ -188,7 +188,7 @@ void merge_sorted(
 
     int n_will_done = src_offset_host[i] + src_size_host[i];
     run_kernel(
-      "merge_sorted", ctx ,program, queue, 1, 7,
+      "merge_sorted", merge_sorted_kernel, ctx ,program, queue, 1, 7,
       sizeof(cl_mem *), src, sizeof(cl_mem *), temp,
       sizeof(cl_int), &offset_1, sizeof(cl_int), &offset_2, sizeof(cl_int), &offset_dst,
       sizeof(cl_int), &n_src_1, sizeof(cl_int), &n_src_2
@@ -203,61 +203,75 @@ void sort(
   cl_context *ctx,
   cl_program *program,
   cl_command_queue *queue,
+  cl_kernel sort_kernel,
+  cl_kernel merge_sorted_kernel,
+  int n_parts,
   int n,
   cl_mem *src,
   cl_mem *temp
 ) {
   cl_int err = CL_SUCCESS;
-  int sort_parts = 4;
   int * src_offset_host = malloc(n * sizeof(int));
   int * src_size_host = malloc(n * sizeof(int));
   cl_mem src_offset, src_size;
 
-  init_chunked_args(ctx, &src_offset, &src_size, src_offset_host, src_size_host, sort_parts, n);
+  init_chunked_args(ctx, &src_offset, &src_size, src_offset_host, src_size_host, n_parts, n);
 
   run_kernel(
-    "sort", ctx ,program, queue, sort_parts, 3,
+    "sort", sort_kernel, ctx ,program, queue, n_parts, 3,
     sizeof(cl_mem *), &src_offset, sizeof(cl_mem *), &src_size, sizeof(cl_mem *), src
   );
 
   err = clEnqueueCopyBuffer(*queue, *src, *temp, 0, 0, n * sizeof(cl_double), 0, NULL, NULL);
   print_err(ctx, &err, "sort src -> temp clEnqueueCopyBuffer()", NULL);
 
-  merge_sorted(ctx, program, queue, src, temp, src_offset_host, src_size_host, sort_parts, n);
+  merge_sorted(
+    ctx, program, queue, merge_sorted_kernel,
+    src, temp, src_offset_host, src_size_host, n_parts, n
+  );
+
+  free(src_offset_host);
+  free(src_size_host);
 }
+
 
 void reduce_sum(
   cl_context *ctx,
   cl_program *program,
   cl_command_queue *queue,
+  cl_kernel reduce_sum_kernel,
+  int n_parts,
   int n,
   cl_mem *src,
   double *result
 ) {
   cl_int err = CL_SUCCESS;
-  int reduce_parts = 4;
   int * src_offset_host = malloc(n * sizeof(int));
   int * src_size_host = malloc(n * sizeof(int));
   cl_mem src_offset, src_size;
 
-  init_chunked_args(ctx, &src_offset, &src_size, src_offset_host, src_size_host, reduce_parts, n);
+  init_chunked_args(ctx, &src_offset, &src_size, src_offset_host, src_size_host, n_parts, n);
   cl_mem dst = clCreateBuffer(*ctx, CL_MEM_READ_WRITE, n * sizeof(cl_double), NULL, &err);
   print_err(ctx, &err, "reduce_sum dst clCreateBuffer()", NULL);
 
   run_kernel(
-    "reduce_sum", ctx ,program, queue, reduce_parts, 4,
+    "reduce_sum", reduce_sum_kernel, ctx ,program, queue, n_parts, 4,
     sizeof(cl_mem *), &src_offset, sizeof(cl_mem *), &src_size, sizeof(cl_mem *), src, sizeof(cl_mem *), &dst
   );
 
   double * dst_host = malloc(n * sizeof(double));
   clEnqueueReadBuffer(*queue, dst, CL_TRUE, 0, n * sizeof(cl_double), dst_host, 0, NULL, NULL);
   *result = 0;
-  for (int i = 0; i < reduce_parts; ++i) {
+  for (int i = 0; i < n_parts; ++i) {
     *result += dst_host[i];
   }
+
+  free(dst_host);
+  free(src_offset_host);
+  free(src_size_host);
 }
 
-// --------------- SORT & REDUCE END
+// ---------------
 
 void generate(
   double * restrict m1_host,
@@ -277,6 +291,99 @@ void generate(
   }
 }
 
+// --------------- INIT METHODS
+
+void init_opencl_env(
+  cl_context * ctx,
+  cl_command_queue * queue,
+  cl_program * program,
+  const char ** source
+) {
+  cl_int err;
+  cl_platform_id platform = 0;
+  cl_device_id device = 0;
+  cl_context_properties props[3] = { CL_CONTEXT_PLATFORM, 0, 0 };
+
+  err = clGetPlatformIDs(1, &platform, NULL);
+  print_err(ctx, &err, "clGetPlatformIDs()", NULL);
+
+  err = clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 1, &device, NULL);
+  print_err(ctx, &err, "clGetDeviceIDs()", NULL);
+
+  props[1] = (cl_context_properties)platform;
+  *ctx = clCreateContext(props, 1, &device, NULL, NULL, &err);
+  print_err(ctx, &err, "clCreateContext()", NULL);
+
+  *queue = clCreateCommandQueue(*ctx, device, 0, &err);
+  print_err(ctx, &err, "clCreateCommandQueue()", NULL);
+
+  // Perform runtime source compilation, and obtain kernel entry point.
+  *program = clCreateProgramWithSource(*ctx, 1, source, NULL, &err );
+  clBuildProgram( *program, 1, &device, NULL, NULL, NULL );
+  if (err != CL_SUCCESS) {
+    size_t len;
+    char buffer[2048];
+    clGetProgramBuildInfo(
+      *program, device, CL_PROGRAM_BUILD_LOG, sizeof(buffer), buffer, &len
+    );
+    printf("clBuildProgram() failed with %s\n", buffer);
+  }
+}
+
+
+void init_buffers(
+  cl_context * ctx,
+  double * m1_host,
+  double * m2_host,
+  cl_mem * m1,
+  cl_mem * m2,
+  cl_mem * m2_cpy,
+  int n1,
+  int n2
+) {
+  cl_int err = CL_SUCCESS;
+  *m1 = clCreateBuffer(*ctx, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, n1 * sizeof(cl_double), m1_host, &err );
+  print_err(ctx, &err, "M1 clCreateBuffer()", NULL);
+  *m2 = clCreateBuffer(*ctx, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, n2 * sizeof(cl_double), m2_host, &err );
+  print_err(ctx, &err, "M2 clCreateBuffer()", NULL);
+  *m2_cpy = clCreateBuffer(*ctx, CL_MEM_READ_WRITE , n2 * sizeof(cl_double), NULL, &err );
+  print_err(ctx, &err, "M2_CPY clCreateBuffer()", NULL);
+}
+
+
+void init_kernels(
+  cl_context * ctx,
+  cl_program * program,
+  cl_kernel * ctanh_sqrt,
+  cl_kernel * sum_prev,
+  cl_kernel * pow_log10,
+  cl_kernel * max_2_src,
+  cl_kernel * map_sin,
+  cl_kernel * sort_kernel,
+  cl_kernel * merge_sort_kernel,
+  cl_kernel * reduce_sum_kernel
+) {
+  cl_int err = CL_SUCCESS;
+  *ctanh_sqrt = clCreateKernel(*program, "ctanh_sqrt", &err);
+  print_err(ctx, &err, "[ctanh_sqrt] clCreateKernel", NULL);
+  *sum_prev = clCreateKernel(*program, "sum_prev", &err);
+  print_err(ctx, &err, "[sum_prev] clCreateKernel", NULL);
+  *pow_log10 = clCreateKernel(*program, "pow_log10", &err);
+  print_err(ctx, &err, "[pow_log10] clCreateKernel", NULL);
+  *max_2_src = clCreateKernel(*program, "max_2_src", &err);
+  print_err(ctx, &err, "[max_2_src] clCreateKernel", NULL);
+  *map_sin = clCreateKernel(*program, "map_sin", &err);
+  print_err(ctx, &err, "[map_sin] clCreateKernel", NULL);
+
+  *sort_kernel = clCreateKernel(*program, "sort", &err);
+  print_err(ctx, &err, "[sort] clCreateKernel", NULL);
+  *merge_sort_kernel = clCreateKernel(*program, "merge_sorted", &err);
+  print_err(ctx, &err, "[merge_sorted] clCreateKernel", NULL);
+  *reduce_sum_kernel = clCreateKernel(*program, "reduce_sum", &err);
+  print_err(ctx, &err, "[reduce_sum] clCreateKernel", NULL);
+}
+
+// ---------------
 
 int main(int argc, char ** argv) {
   double time_start = get_time();
@@ -302,53 +409,28 @@ int main(int argc, char ** argv) {
   fclose(fp);
 
   cl_int err;
-  cl_platform_id platform = 0;
-  cl_device_id device = 0;
-  cl_context_properties props[3] = { CL_CONTEXT_PLATFORM, 0, 0 };
   cl_context ctx = 0;
   cl_command_queue queue = 0;
-  cl_event event = NULL;
-  int ret = 0;
+  cl_program program = NULL;
 
-  /* Setup OpenCL environment. */
-  err = clGetPlatformIDs(1, &platform, NULL);
-  print_err(&ctx, &err, "clGetPlatformIDs()", NULL);
-
-  err = clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 1, &device, NULL);
-  print_err(&ctx, &err, "clGetDeviceIDs()", NULL);
-
-  props[1] = (cl_context_properties)platform;
-  ctx = clCreateContext(props, 1, &device, NULL, NULL, &err);
-  print_err(&ctx, &err, "clCreateContext()", NULL);
-
-  queue = clCreateCommandQueue(ctx, device, 0, &err);
-  print_err(&ctx, &err, "clCreateCommandQueue()", NULL);
-
-  // 4. Perform runtime source compilation, and obtain kernel entry point.
-  cl_program program = clCreateProgramWithSource(ctx, 1, &source, NULL, &err );
-  clBuildProgram( program, 1, &device, NULL, NULL, NULL );
-  if (err != CL_SUCCESS) {
-    size_t len;
-    char buffer[2048];
-    clGetProgramBuildInfo(
-      program, device, CL_PROGRAM_BUILD_LOG, sizeof(buffer), buffer, &len
-    );
-    printf("clBuildProgram() failed with %s\n", buffer);
-  }
+  init_opencl_env(&ctx, &queue, &program, &source);
 
   const int N = atoi(argv[1]);
   const int N_2 = N / 2;
+  const int N_separate =  argc > 2 ? atoi(argv[2]) : 4;
 
   double * restrict m1_host = malloc(N * sizeof(double));
   double * restrict m2_host = malloc(N_2 * sizeof(double));
+  cl_mem m1, m2, m2_cpy;
+  init_buffers(&ctx, m1_host, m2_host, &m1, &m2, &m2_cpy, N, N_2);
 
-  // Create a data buffer.
-  cl_mem m1 = clCreateBuffer(ctx, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, N * sizeof(cl_double), m1_host, &err );
-  print_err(&ctx, &err, "M1 clCreateBuffer()", NULL);
-  cl_mem m2 = clCreateBuffer(ctx, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, N_2 * sizeof(cl_double), m2_host, &err );
-  print_err(&ctx, &err, "M2 clCreateBuffer()", NULL);
-  cl_mem m2_cpy = clCreateBuffer(ctx, CL_MEM_READ_WRITE , N_2 * sizeof(cl_double), NULL, &err );
-  print_err(&ctx, &err, "M2_CPY clCreateBuffer()", NULL);
+  cl_kernel ctanh_sqrt, sum_prev, pow_log10, max_2_src, map_sin;
+  cl_kernel sort_kernel, merge_sort_kernel, reduce_sum_kernel;
+
+  init_kernels(
+    &ctx, &program, &ctanh_sqrt, &sum_prev, &pow_log10, &max_2_src, &map_sin,
+    &sort_kernel, &merge_sort_kernel, &reduce_sum_kernel
+  );
 
   for (int i = 0; i < 100; i++) {
     generate(m1_host, m2_host, N, N_2, i);
@@ -362,29 +444,23 @@ int main(int argc, char ** argv) {
 
     // map
     run_kernel(
-      "ctanh_sqrt", &ctx ,&program, &queue, N, 2,
+      "ctanh_sqrt", ctanh_sqrt, &ctx ,&program, &queue, N, 2,
       sizeof(cl_mem *), &m1, sizeof(cl_mem *), &m1
     );
-    print_buffer(&program, &queue, &m1, N, "M1");
     run_kernel(
-      "sum_prev", &ctx ,&program, &queue, N_2, 3,
+      "sum_prev", sum_prev, &ctx ,&program, &queue, N_2, 3,
       sizeof(cl_mem *), &m2, sizeof(cl_mem *), &m2_cpy, sizeof(cl_mem *), &m2
     );
-
-    print_buffer(&program, &queue, &m2, N_2, "M2");
     run_kernel(
-      "pow_log10", &ctx ,&program, &queue, N_2, 2,
+      "pow_log10", pow_log10, &ctx ,&program, &queue, N_2, 2,
       sizeof(cl_mem *), &m2, sizeof(cl_mem *), &m2
     );
-    print_buffer(&program, &queue, &m2, N_2, "M2");
     run_kernel(
-      "max_2_src", &ctx ,&program, &queue, N_2, 3,
+      "max_2_src", max_2_src, &ctx ,&program, &queue, N_2, 3,
       sizeof(cl_mem *), &m2, sizeof(cl_mem *), &m1, sizeof(cl_mem *), &m2_cpy
     );
-    print_buffer(&program, &queue, &m2_cpy, N_2, "M2_CPY");
 
-    sort(&ctx, &program, &queue, N_2, &m2_cpy, &m2);
-    print_buffer(&program, &queue, &m2_cpy, N_2, "M2");
+    sort(&ctx, &program, &queue, sort_kernel, merge_sort_kernel, N_separate, N_2, &m2_cpy, &m2);
 
     clEnqueueReadBuffer(queue, m2_cpy, CL_TRUE, 0, N_2 * sizeof(cl_double), m2_host, 0, NULL, NULL);
     int k = 0;
@@ -392,13 +468,12 @@ int main(int argc, char ** argv) {
     cl_double m2_min = m2_host[k];
 
     run_kernel(
-      "map_sin", &ctx ,&program, &queue, N_2, 3,
+      "map_sin", map_sin, &ctx ,&program, &queue, N_2, 3,
       sizeof(cl_mem *), &m2_cpy, sizeof(cl_mem *), &m2_cpy, sizeof(cl_double), &m2_min
     );
-    print_buffer(&program, &queue, &m2_cpy, N_2, "M2");
 
     double X = 0;
-    reduce_sum(&ctx ,&program, &queue, N_2, &m2_cpy, &X);
+    reduce_sum(&ctx ,&program, &queue, reduce_sum_kernel, N_separate, N_2, &m2_cpy, &X);
     printf("%f ", X);
   }
 
