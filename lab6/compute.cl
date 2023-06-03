@@ -12,14 +12,6 @@ kernel void ctanh_sqrt(
     dst[i] = 1 / tanh(sqrt(src[i]));
 }
 
-kernel void sum_1(
-    global double *src,
-    global double *dst
-) {
-    int i = get_global_id(0);
-    dst[i] = src[i] + 1;
-}
-
 kernel void sum_prev(
     global double *src1,
     global double *src2,

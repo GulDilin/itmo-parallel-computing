@@ -57,14 +57,20 @@ void print_err_code(cl_int * err) {
   }
 }
 
-void print_err(cl_context * ctx, cl_int * err, const char * f_name) {
+void print_err(
+  cl_context * ctx,
+  cl_int * err,
+  const char * f_name,
+  const char * subpart
+) {
   if (*err != CL_SUCCESS) {
-      printf( "%s failed with %d\n", f_name, *err );
-      print_err_code(err);
-      if (*ctx) {
-        clReleaseContext(*ctx);
-      }
-      exit(1);
+    if (subpart) printf( "[%s] %s failed with %d\n", subpart, f_name, *err );
+    else printf( "%s failed with %d\n", f_name, *err );
+    print_err_code(err);
+    if (*ctx) {
+      clReleaseContext(*ctx);
+    }
+    exit(1);
   }
 }
 
@@ -72,54 +78,59 @@ void print_buffer(
   cl_program *program,
   cl_command_queue *queue,
   cl_mem *dst,
-  int n
+  int n,
+  const char * buffer_name
 ) {
   printf("print_buffer\n");
   double * dst_host = malloc(n * sizeof(double));
   clEnqueueReadBuffer(*queue, *dst, CL_TRUE, 0, n * sizeof(cl_double), dst_host, 0, NULL, NULL);
-  for(int i = 0; i < n; i++) {
-    printf("%f ", dst_host[i]);
-  }
+  if (buffer_name) printf("%s ", buffer_name);
+  for(int i = 0; i < n; i++) printf("%f ", dst_host[i]);
   printf("\n");
   free(dst_host);
 }
 
-void ctanh_sqrt(
+void run_kernel_one_source(
+  const char * kernel_name,
   cl_context *ctx,
   cl_program *program,
   cl_command_queue *queue,
+  int n,
   cl_mem *src,
-  cl_mem *dst,
-  int n
+  cl_mem *dst
 ) {
   cl_int err = CL_SUCCESS;
-  cl_kernel kernel = clCreateKernel( *program, "ctanh_sqrt", &err );
-  print_err(ctx, &err, "[ctanh_sqrt] clCreateKernel()");
+  cl_kernel kernel = clCreateKernel( *program, kernel_name, &err );
+  print_err(ctx, &err, "clCreateKernel()", kernel_name);
   err = clSetKernelArg(kernel, 0, sizeof(cl_mem), src);
-  print_err(ctx, &err, "[ctanh_sqrt] clSetKernelArg(src)");
   err |= clSetKernelArg(kernel, 1, sizeof(cl_mem), dst);
-  print_err(ctx, &err, "[ctanh_sqrt] clSetKernelArg(dst)");
+  print_err(ctx, &err, "clSetKernelArg(src, dst)", kernel_name);
   size_t global_work_size = n;
   err = clEnqueueNDRangeKernel(*queue, kernel, 1, NULL, &global_work_size, NULL, 0, NULL, NULL);
-  print_err(ctx, &err, "[ctanh_sqrt] clEnqueueNDRangeKernel()");
+  print_err(ctx, &err, "clEnqueueNDRangeKernel()", kernel_name);
 }
 
-void sum_prev(
+void run_kernel_two_sources(
+  const char * kernel_name,
+  cl_context *ctx,
   cl_program *program,
   cl_command_queue *queue,
+  int n,
   cl_mem *src1,
   cl_mem *src2,
-  cl_mem *dst,
-  int n
+  cl_mem *dst
 ) {
-  cl_kernel kernel = clCreateKernel( *program, "sum_prev", NULL );
-  cl_int err = clSetKernelArg(kernel, 0, sizeof(cl_mem), src1);
-  err |= clSetKernelArg(kernel, 1, sizeof(cl_mem), src2);
+  cl_int err = CL_SUCCESS;
+  cl_kernel kernel = clCreateKernel( *program, kernel_name, &err );
+  print_err(ctx, &err, "clCreateKernel()", kernel_name);
+  err = clSetKernelArg(kernel, 0, sizeof(cl_mem), src1);
+  err = clSetKernelArg(kernel, 1, sizeof(cl_mem), src2);
   err |= clSetKernelArg(kernel, 2, sizeof(cl_mem), dst);
+  print_err(ctx, &err, "clSetKernelArg(src, dst)", kernel_name);
   size_t global_work_size = n;
-  clEnqueueNDRangeKernel(*queue, kernel, 1, NULL, &global_work_size, NULL, 0, NULL, NULL);
+  err = clEnqueueNDRangeKernel(*queue, kernel, 1, NULL, &global_work_size, NULL, 0, NULL, NULL);
+  print_err(ctx, &err, "clEnqueueNDRangeKernel()", kernel_name);
 }
-
 
 int main(int argc, char ** argv) {
   /* Read source to char buffer */
@@ -153,17 +164,17 @@ int main(int argc, char ** argv) {
 
   /* Setup OpenCL environment. */
   err = clGetPlatformIDs(1, &platform, NULL);
-  print_err(&ctx, &err, "clGetPlatformIDs()");
+  print_err(&ctx, &err, "clGetPlatformIDs()", NULL);
 
   err = clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 1, &device, NULL);
-  print_err(&ctx, &err, "clGetDeviceIDs()");
+  print_err(&ctx, &err, "clGetDeviceIDs()", NULL);
 
   props[1] = (cl_context_properties)platform;
   ctx = clCreateContext(props, 1, &device, NULL, NULL, &err);
-  print_err(&ctx, &err, "clCreateContext()");
+  print_err(&ctx, &err, "clCreateContext()", NULL);
 
   queue = clCreateCommandQueue(ctx, device, 0, &err);
-  print_err(&ctx, &err, "clCreateCommandQueue()");
+  print_err(&ctx, &err, "clCreateCommandQueue()", NULL);
 
   // 4. Perform runtime source compilation, and obtain kernel entry point.
   cl_program program = clCreateProgramWithSource(ctx, 1, &source, NULL, &err );
@@ -192,21 +203,26 @@ int main(int argc, char ** argv) {
 
   // 5. Create a data buffer.
   cl_mem m1 = clCreateBuffer(ctx, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, N * sizeof(cl_double), m1_host, &err );
-  print_err(&ctx, &err, "M1 clCreateBuffer()");
+  print_err(&ctx, &err, "M1 clCreateBuffer()", NULL);
   cl_mem m2 = clCreateBuffer(ctx, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, N_2 * sizeof(cl_double), m2_host, &err );
-  print_err(&ctx, &err, "M2 clCreateBuffer()");
+  print_err(&ctx, &err, "M2 clCreateBuffer()", NULL);
   cl_mem m2_cpy = clCreateBuffer(ctx, CL_MEM_READ_WRITE , N_2 * sizeof(cl_double), NULL, &err );
-  print_err(&ctx, &err, "M2_CPY clCreateBuffer()");
+  print_err(&ctx, &err, "M2_CPY clCreateBuffer()", NULL);
   cl_mem dst = clCreateBuffer(ctx, CL_MEM_WRITE_ONLY, N * sizeof(cl_double), NULL, &err );
-  print_err(&ctx, &err, "DST clCreateBuffer()");
+  print_err(&ctx, &err, "DST clCreateBuffer()", NULL);
   err = clEnqueueWriteBuffer(queue, m2_cpy, CL_TRUE, 0, N_2 * sizeof(cl_double), m2_host, 0, NULL, NULL);
-  print_err(&ctx, &err, "m2_cpy clEnqueueWriteBuffer()");
+  print_err(&ctx, &err, "m2_cpy clEnqueueWriteBuffer()", NULL);
 
   // map
-  ctanh_sqrt(&ctx ,&program, &queue, &m1, &dst, N);
+  run_kernel_one_source("ctanh_sqrt", &ctx ,&program, &queue, N, &m1, &m1);
+  print_buffer(&program, &queue, &m1, N, "M1");
+  run_kernel_two_sources("sum_prev", &ctx ,&program, &queue, N, &m2, &m2_cpy, &m2);
+  // ctanh_sqrt(&ctx ,&program, &queue, &m1, &m1, N);
+  // sum_prev(&ctx ,&program, &queue, &m2, &m2_cpy, &m2, N_2);
+  print_buffer(&program, &queue, &m2, N_2, "M2");
+
 
   clFinish( queue );
-  print_buffer(&program, &queue, &dst, N);
 
   return 0;
 }
