@@ -133,8 +133,9 @@ void run_kernel(
   va_start(valist, n_args);
   err = CL_SUCCESS;
   for (int i = 0; i < n_args; ++i) {
-    cl_mem * arg = va_arg(valist, cl_mem *);
-    err |= clSetKernelArg(kernel, i, sizeof(cl_mem), arg);
+    size_t arg_size = va_arg(valist, size_t);
+    void * arg = va_arg(valist, void *);
+    err |= clSetKernelArg(kernel, i, arg_size, arg);
   }
   va_end(valist);
   print_err(ctx, &err, "clSetKernelArg()", kernel_name);
@@ -182,7 +183,10 @@ void sort(
   print_err(ctx, &err, "sort src_offset clCreateBuffer()", NULL);
   cl_mem src_size = clCreateBuffer(*ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sort_parts * sizeof(cl_double), src_size_host, &err );
   print_err(ctx, &err, "sort src_size clCreateBuffer()", NULL);
-  run_kernel("sort", ctx ,program, queue, sort_parts, 3, &src_offset, &src_size, src);
+  run_kernel(
+    "sort", ctx ,program, queue, sort_parts, 3,
+    sizeof(cl_mem *), &src_offset, sizeof(cl_mem *), &src_size, sizeof(cl_mem *), src
+  );
 
   err = clEnqueueCopyBuffer(*queue, *src, *temp, 0, 0, n * sizeof(cl_double), 0, NULL, NULL);
   print_err(ctx, &err, "sort src -> temp clEnqueueCopyBuffer()", NULL);
@@ -190,8 +194,7 @@ void sort(
   cl_mem offset_and_sizes = clCreateBuffer(*ctx, CL_MEM_READ_WRITE, 5 * sizeof(cl_int), NULL, &err );
   int * offset_and_sizes_host = malloc(5 * sizeof(int));
 
-  for (int i = 1; i < sort_parts; ++i)
-  {
+  for (int i = 1; i < sort_parts; ++i) {
       int offset_1 = 0, offset_2 = src_offset_host[i], offset_dst = 0;
       int n_src_1 = src_offset_host[i], n_src_2 = src_size_host[i];
       offset_and_sizes_host[0] = offset_1;
@@ -205,7 +208,8 @@ void sort(
       int n_will_done = src_offset_host[i] + src_size_host[i];
       run_kernel(
         "merge_sorted", ctx ,program, queue, 1, 3,
-        src, temp, &offset_and_sizes
+        sizeof(cl_mem *), src, sizeof(cl_mem *), temp,
+        sizeof(cl_mem *), &offset_and_sizes
       );
       err = clEnqueueCopyBuffer(*queue, *temp, *src, 0, 0, n_will_done * sizeof(cl_double), 0, NULL, NULL);
       print_err(ctx, &err, "sort temp -> src clEnqueueCopyBuffer()", NULL);
@@ -295,19 +299,36 @@ int main(int argc, char ** argv) {
   print_err(&ctx, &err, "m2_cpy clEnqueueWriteBuffer()", NULL);
 
   // map
-  run_kernel("ctanh_sqrt", &ctx ,&program, &queue, N, 2, &m1, &m1);
+  run_kernel(
+    "ctanh_sqrt", &ctx ,&program, &queue, N, 2,
+    sizeof(cl_mem *), &m1, sizeof(cl_mem *), &m1
+  );
   print_buffer(&program, &queue, &m1, N, "M1");
-  run_kernel("sum_prev", &ctx ,&program, &queue, N_2, 3, &m2, &m2_cpy, &m2);
+  run_kernel(
+    "sum_prev", &ctx ,&program, &queue, N_2, 3,
+    sizeof(cl_mem *), &m2, sizeof(cl_mem *), &m2_cpy, sizeof(cl_mem *), &m2
+  );
   // ctanh_sqrt(&ctx ,&program, &queue, &m1, &m1, N);
   // sum_prev(&ctx ,&program, &queue, &m2, &m2_cpy, &m2, N_2);
   print_buffer(&program, &queue, &m2, N_2, "M2");
-  run_kernel("pow_log10", &ctx ,&program, &queue, N_2, 2, &m2, &m2);
+  run_kernel(
+    "pow_log10", &ctx ,&program, &queue, N_2, 2,
+    sizeof(cl_mem *), &m2, sizeof(cl_mem *), &m2
+  );
   print_buffer(&program, &queue, &m2, N_2, "M2");
-  run_kernel("max_2_src", &ctx ,&program, &queue, N_2, 3, &m2, &m1, &m2_cpy);
+  run_kernel(
+    "max_2_src", &ctx ,&program, &queue, N_2, 3,
+    sizeof(cl_mem *), &m2, sizeof(cl_mem *), &m1, sizeof(cl_mem *), &m2_cpy
+  );
   print_buffer(&program, &queue, &m2_cpy, N_2, "M2_CPY");
 
   sort(&ctx, &program, &queue, N_2, &m2_cpy, &m2);
-  print_buffer(&program, &queue, &m2_cpy, N_2, "M2_CPY");
+  print_buffer(&program, &queue, &m2_cpy, N_2, "M2");
+
+  clEnqueueReadBuffer(queue, m2_cpy, CL_TRUE, 0, N_2 * sizeof(cl_double), m2_host, 0, NULL, NULL);
+  int k = 0;
+  while (m2_host[k] == 0 && k < N_2 - 1) k++;
+  double m2_min = m2_host[k];
 
 
   clFinish( queue );
