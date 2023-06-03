@@ -38,6 +38,32 @@ kernel void max_2_src(
     dst[i] = max(src1[i], src2[i]);
 }
 
+kernel void map_sin(
+    global double *src,
+    global double *dst,
+    double min_v
+) {
+    int i = get_global_id(0);
+    if( (int)(src[i] / min_v) % 2 == 0 ) {
+        dst[i] = sin(src[i]);
+    } else {
+        dst[i] = 0;
+    }
+}
+
+kernel void reduce_sum(
+    global int *src_offset,
+    global int *src_size,
+    global double *src,
+    global double *dst
+) {
+    int k = get_global_id(0);
+    dst[k] = 0;
+    for (int i = 0; i < src_size[k]; i++) {
+        dst[k] += src[src_offset[k] + i];
+    }
+}
+
 kernel void sort(
     global double *src_offset,
     global double *src_size,
@@ -61,14 +87,15 @@ kernel void sort(
 kernel void merge_sorted(
     global double *src,
     global double *dst,
-    global int *offset_and_sizes
+    int offset_1,
+    int offset_2,
+    int offset_dst,
+    int n_src_1,
+    int n_src_2
 ) {
-    int i1 = offset_and_sizes[0];
-    int i2 = offset_and_sizes[1];
-    int i = offset_and_sizes[2];
-    int n_src_1 = offset_and_sizes[3];
-    int n_src_2 = offset_and_sizes[4];
-    int offset_2 = offset_and_sizes[1];
+    int i1 = offset_1;
+    int i2 = offset_2;
+    int i = offset_dst;
     while (i < n_src_1 + n_src_2) {
         dst[i++] = src[i1] > src[i2] && i2 < n_src_2 + offset_2 ? src[i2++] : src[i1++];
     }

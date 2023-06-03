@@ -6,35 +6,11 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <math.h>
+#include <sys/timeb.h>
 
-
+// #define DEBUG 1
 #define NWITEMS 10
 #define SOURCE_NAME "compute.cl"
-
-void generate(
-  double * restrict m1_host,
-  double * restrict m2_host,
-  int n1,
-  int n2,
-  int i
-) {
-  const int A = 280;
-  srand(i);
-
-  for (int j = 0; j < n1; ++j) {
-      m1_host[j] = (rand() % (A * 100)) / 100.0 + 1;
-  }
-  for (int j = 0; j < n2; ++j) {
-      m2_host[j] = A + rand() % (A * 9);
-  }
-}
-
-void print_arr(double *array, int n) {
-    for (int i = 0; i < n; ++i) {
-        printf("%f ", array[i]);
-    }
-    printf("\n");
-}
 
 void print_err_code(cl_int * err) {
   switch (*err) {
@@ -100,6 +76,17 @@ void print_err(
   }
 }
 
+
+void print_arr(double *array, int n) {
+  #ifdef DEBUG
+    for (int i = 0; i < n; ++i) {
+        printf("%f ", array[i]);
+    }
+    printf("\n");
+  #endif
+}
+
+
 void print_buffer(
   cl_program *program,
   cl_command_queue *queue,
@@ -107,14 +94,24 @@ void print_buffer(
   int n,
   const char * buffer_name
 ) {
-  printf("print_buffer\n");
-  double * dst_host = malloc(n * sizeof(double));
-  clEnqueueReadBuffer(*queue, *dst, CL_TRUE, 0, n * sizeof(cl_double), dst_host, 0, NULL, NULL);
-  if (buffer_name) printf("%s ", buffer_name);
-  for(int i = 0; i < n; i++) printf("%f ", dst_host[i]);
-  printf("\n");
-  free(dst_host);
+  #ifdef DEBUG
+    double * dst_host = malloc(n * sizeof(double));
+    clEnqueueReadBuffer(*queue, *dst, CL_TRUE, 0, n * sizeof(cl_double), dst_host, 0, NULL, NULL);
+    if (buffer_name) printf("%s ", buffer_name);
+    for (int i = 0; i < n; i++) printf("%f ", dst_host[i]);
+    printf("\n");
+    free(dst_host);
+  #endif
 }
+
+double get_time() {
+  struct timeb result;
+  ftime(&result);
+  return 1000.0 * result.time + result.millitm;
+}
+
+// --------------- PRINTS END
+
 
 void run_kernel(
   const char * kernel_name,
@@ -144,32 +141,19 @@ void run_kernel(
   print_err(ctx, &err, "clEnqueueNDRangeKernel()", kernel_name);
 }
 
-void merge_sorted(double *src1, int n1, double *src2, int n2, double *dst) {
-    int i = 0, i1 = 0, i2 = 0;
-    while (i < n1 + n2) {
-        dst[i++] = src1[i1] > src2[i2] && i2 < n2 ? src2[i2++] : src1[i1++];
-    }
-}
 
-void copy_array(double *src, double *dst, int n) {
-  for (int i = 0; i < n; ++i) {
-    dst[i] = src[i];
-  }
-}
+// --------------- SORT & REDUCE
 
-void sort(
+void init_chunked_args(
   cl_context *ctx,
-  cl_program *program,
-  cl_command_queue *queue,
-  int n,
-  cl_mem *src,
-  cl_mem *temp
+  cl_mem *src_offset,
+  cl_mem *src_size,
+  int * src_offset_host,
+  int * src_size_host,
+  int sort_parts,
+  int n
 ) {
-  const int sort_parts = 4;
   int n_chunk = sort_parts < 2 ? n : ceil((double) n / sort_parts);
-  int * src_offset_host = malloc(n * sizeof(int));
-  int * src_size_host = malloc(n * sizeof(int));
-
   int n_done = 0;
   for (int i = 0; i < sort_parts; ++i) {
     int n_cur_chunk = max(min((n - n_done), n_chunk), 0);
@@ -179,10 +163,58 @@ void sort(
   }
 
   cl_int err = CL_SUCCESS;
-  cl_mem src_offset = clCreateBuffer(*ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sort_parts * sizeof(cl_double), src_offset_host, &err );
+  *src_offset = clCreateBuffer(*ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sort_parts * sizeof(cl_int), src_offset_host, &err );
   print_err(ctx, &err, "sort src_offset clCreateBuffer()", NULL);
-  cl_mem src_size = clCreateBuffer(*ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sort_parts * sizeof(cl_double), src_size_host, &err );
+  *src_size = clCreateBuffer(*ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sort_parts * sizeof(cl_int), src_size_host, &err );
   print_err(ctx, &err, "sort src_size clCreateBuffer()", NULL);
+}
+
+
+void merge_sorted(
+  cl_context *ctx,
+  cl_program *program,
+  cl_command_queue *queue,
+  cl_mem *src,
+  cl_mem *temp,
+  int * src_offset_host,
+  int * src_size_host,
+  int sort_parts,
+  int n
+) {
+  cl_int err = CL_SUCCESS;
+  for (int i = 1; i < sort_parts; ++i) {
+    cl_int offset_1 = 0, offset_2 = src_offset_host[i], offset_dst = 0;
+    cl_int n_src_1 = src_offset_host[i], n_src_2 = src_size_host[i];
+
+    int n_will_done = src_offset_host[i] + src_size_host[i];
+    run_kernel(
+      "merge_sorted", ctx ,program, queue, 1, 7,
+      sizeof(cl_mem *), src, sizeof(cl_mem *), temp,
+      sizeof(cl_int), &offset_1, sizeof(cl_int), &offset_2, sizeof(cl_int), &offset_dst,
+      sizeof(cl_int), &n_src_1, sizeof(cl_int), &n_src_2
+    );
+    err = clEnqueueCopyBuffer(*queue, *temp, *src, 0, 0, n_will_done * sizeof(cl_double), 0, NULL, NULL);
+    print_err(ctx, &err, "sort temp -> src clEnqueueCopyBuffer()", NULL);
+  }
+}
+
+
+void sort(
+  cl_context *ctx,
+  cl_program *program,
+  cl_command_queue *queue,
+  int n,
+  cl_mem *src,
+  cl_mem *temp
+) {
+  cl_int err = CL_SUCCESS;
+  int sort_parts = 4;
+  int * src_offset_host = malloc(n * sizeof(int));
+  int * src_size_host = malloc(n * sizeof(int));
+  cl_mem src_offset, src_size;
+
+  init_chunked_args(ctx, &src_offset, &src_size, src_offset_host, src_size_host, sort_parts, n);
+
   run_kernel(
     "sort", ctx ,program, queue, sort_parts, 3,
     sizeof(cl_mem *), &src_offset, sizeof(cl_mem *), &src_size, sizeof(cl_mem *), src
@@ -191,32 +223,64 @@ void sort(
   err = clEnqueueCopyBuffer(*queue, *src, *temp, 0, 0, n * sizeof(cl_double), 0, NULL, NULL);
   print_err(ctx, &err, "sort src -> temp clEnqueueCopyBuffer()", NULL);
 
-  cl_mem offset_and_sizes = clCreateBuffer(*ctx, CL_MEM_READ_WRITE, 5 * sizeof(cl_int), NULL, &err );
-  int * offset_and_sizes_host = malloc(5 * sizeof(int));
+  merge_sorted(ctx, program, queue, src, temp, src_offset_host, src_size_host, sort_parts, n);
+}
 
-  for (int i = 1; i < sort_parts; ++i) {
-      int offset_1 = 0, offset_2 = src_offset_host[i], offset_dst = 0;
-      int n_src_1 = src_offset_host[i], n_src_2 = src_size_host[i];
-      offset_and_sizes_host[0] = offset_1;
-      offset_and_sizes_host[1] = offset_2;
-      offset_and_sizes_host[2] = 0;
-      offset_and_sizes_host[3] = src_offset_host[i];
-      offset_and_sizes_host[4] = src_size_host[i];
-      err = clEnqueueWriteBuffer(*queue, offset_and_sizes, CL_TRUE, 0, 5 * sizeof(cl_int), offset_and_sizes_host, 0, NULL, NULL);
-      print_err(ctx, &err, "offset_and_sizes_host clEnqueueWriteBuffer()", NULL);
+void reduce_sum(
+  cl_context *ctx,
+  cl_program *program,
+  cl_command_queue *queue,
+  int n,
+  cl_mem *src,
+  double *result
+) {
+  cl_int err = CL_SUCCESS;
+  int reduce_parts = 4;
+  int * src_offset_host = malloc(n * sizeof(int));
+  int * src_size_host = malloc(n * sizeof(int));
+  cl_mem src_offset, src_size;
 
-      int n_will_done = src_offset_host[i] + src_size_host[i];
-      run_kernel(
-        "merge_sorted", ctx ,program, queue, 1, 3,
-        sizeof(cl_mem *), src, sizeof(cl_mem *), temp,
-        sizeof(cl_mem *), &offset_and_sizes
-      );
-      err = clEnqueueCopyBuffer(*queue, *temp, *src, 0, 0, n_will_done * sizeof(cl_double), 0, NULL, NULL);
-      print_err(ctx, &err, "sort temp -> src clEnqueueCopyBuffer()", NULL);
+  init_chunked_args(ctx, &src_offset, &src_size, src_offset_host, src_size_host, reduce_parts, n);
+  cl_mem dst = clCreateBuffer(*ctx, CL_MEM_READ_WRITE, n * sizeof(cl_double), NULL, &err);
+  print_err(ctx, &err, "reduce_sum dst clCreateBuffer()", NULL);
+
+  run_kernel(
+    "reduce_sum", ctx ,program, queue, reduce_parts, 4,
+    sizeof(cl_mem *), &src_offset, sizeof(cl_mem *), &src_size, sizeof(cl_mem *), src, sizeof(cl_mem *), &dst
+  );
+
+  double * dst_host = malloc(n * sizeof(double));
+  clEnqueueReadBuffer(*queue, dst, CL_TRUE, 0, n * sizeof(cl_double), dst_host, 0, NULL, NULL);
+  *result = 0;
+  for (int i = 0; i < reduce_parts; ++i) {
+    *result += dst_host[i];
   }
 }
 
+// --------------- SORT & REDUCE END
+
+void generate(
+  double * restrict m1_host,
+  double * restrict m2_host,
+  int n1,
+  int n2,
+  int i
+) {
+  const int A = 280;
+  srand(i);
+
+  for (int j = 0; j < n1; ++j) {
+    m1_host[j] = (rand() % (A * 100)) / 100.0 + 1;
+  }
+  for (int j = 0; j < n2; ++j) {
+    m2_host[j] = A + rand() % (A * 9);
+  }
+}
+
+
 int main(int argc, char ** argv) {
+  double time_start = get_time();
+
   /* Read source to char buffer */
   FILE *fp;
   long lSize;
@@ -272,66 +336,77 @@ int main(int argc, char ** argv) {
     printf("clBuildProgram() failed with %s\n", buffer);
   }
 
-  const int N = NWITEMS;
+  const int N = atoi(argv[1]);
   const int N_2 = N / 2;
 
   double * restrict m1_host = malloc(N * sizeof(double));
   double * restrict m2_host = malloc(N_2 * sizeof(double));
-  generate( m1_host, m2_host, N, N_2, 2 );
-  printf("M1 HOST\n");
-  print_arr(m1_host, N);
-  printf("M2 HOST\n");
-  print_arr(m2_host, N_2);
 
-  printf("START OCL\n");
-
-  // 5. Create a data buffer.
+  // Create a data buffer.
   cl_mem m1 = clCreateBuffer(ctx, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, N * sizeof(cl_double), m1_host, &err );
   print_err(&ctx, &err, "M1 clCreateBuffer()", NULL);
   cl_mem m2 = clCreateBuffer(ctx, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, N_2 * sizeof(cl_double), m2_host, &err );
   print_err(&ctx, &err, "M2 clCreateBuffer()", NULL);
   cl_mem m2_cpy = clCreateBuffer(ctx, CL_MEM_READ_WRITE , N_2 * sizeof(cl_double), NULL, &err );
   print_err(&ctx, &err, "M2_CPY clCreateBuffer()", NULL);
-  cl_mem dst = clCreateBuffer(ctx, CL_MEM_WRITE_ONLY, N * sizeof(cl_double), NULL, &err );
-  print_err(&ctx, &err, "DST clCreateBuffer()", NULL);
-  err = clEnqueueCopyBuffer(queue, m2, m2_cpy, 0, 0, N_2 * sizeof(cl_double), 0, NULL, NULL);
-  // err = clEnqueueWriteBuffer(queue, m2_cpy, CL_TRUE, 0, N_2 * sizeof(cl_double), m2_host, 0, NULL, NULL);
-  print_err(&ctx, &err, "m2_cpy clEnqueueWriteBuffer()", NULL);
 
-  // map
-  run_kernel(
-    "ctanh_sqrt", &ctx ,&program, &queue, N, 2,
-    sizeof(cl_mem *), &m1, sizeof(cl_mem *), &m1
-  );
-  print_buffer(&program, &queue, &m1, N, "M1");
-  run_kernel(
-    "sum_prev", &ctx ,&program, &queue, N_2, 3,
-    sizeof(cl_mem *), &m2, sizeof(cl_mem *), &m2_cpy, sizeof(cl_mem *), &m2
-  );
-  // ctanh_sqrt(&ctx ,&program, &queue, &m1, &m1, N);
-  // sum_prev(&ctx ,&program, &queue, &m2, &m2_cpy, &m2, N_2);
-  print_buffer(&program, &queue, &m2, N_2, "M2");
-  run_kernel(
-    "pow_log10", &ctx ,&program, &queue, N_2, 2,
-    sizeof(cl_mem *), &m2, sizeof(cl_mem *), &m2
-  );
-  print_buffer(&program, &queue, &m2, N_2, "M2");
-  run_kernel(
-    "max_2_src", &ctx ,&program, &queue, N_2, 3,
-    sizeof(cl_mem *), &m2, sizeof(cl_mem *), &m1, sizeof(cl_mem *), &m2_cpy
-  );
-  print_buffer(&program, &queue, &m2_cpy, N_2, "M2_CPY");
+  for (int i = 0; i < 100; i++) {
+    generate(m1_host, m2_host, N, N_2, i);
+    print_arr(m1_host, N);
+    print_arr(m2_host, N_2);
 
-  sort(&ctx, &program, &queue, N_2, &m2_cpy, &m2);
-  print_buffer(&program, &queue, &m2_cpy, N_2, "M2");
+    err = clEnqueueWriteBuffer(queue, m1, CL_TRUE, 0, N_2 * sizeof(cl_double), m1_host, 0, NULL, NULL);
+    err |= clEnqueueWriteBuffer(queue, m2, CL_TRUE, 0, N_2 * sizeof(cl_double), m2_host, 0, NULL, NULL);
+    err |= clEnqueueCopyBuffer(queue, m2, m2_cpy, 0, 0, N_2 * sizeof(cl_double), 0, NULL, NULL);
+    print_err(&ctx, &err, "m1, m2, m2_cpy clEnqueueWriteBuffer, clEnqueueCopyBuffer()", NULL);
 
-  clEnqueueReadBuffer(queue, m2_cpy, CL_TRUE, 0, N_2 * sizeof(cl_double), m2_host, 0, NULL, NULL);
-  int k = 0;
-  while (m2_host[k] == 0 && k < N_2 - 1) k++;
-  double m2_min = m2_host[k];
+    // map
+    run_kernel(
+      "ctanh_sqrt", &ctx ,&program, &queue, N, 2,
+      sizeof(cl_mem *), &m1, sizeof(cl_mem *), &m1
+    );
+    print_buffer(&program, &queue, &m1, N, "M1");
+    run_kernel(
+      "sum_prev", &ctx ,&program, &queue, N_2, 3,
+      sizeof(cl_mem *), &m2, sizeof(cl_mem *), &m2_cpy, sizeof(cl_mem *), &m2
+    );
 
+    print_buffer(&program, &queue, &m2, N_2, "M2");
+    run_kernel(
+      "pow_log10", &ctx ,&program, &queue, N_2, 2,
+      sizeof(cl_mem *), &m2, sizeof(cl_mem *), &m2
+    );
+    print_buffer(&program, &queue, &m2, N_2, "M2");
+    run_kernel(
+      "max_2_src", &ctx ,&program, &queue, N_2, 3,
+      sizeof(cl_mem *), &m2, sizeof(cl_mem *), &m1, sizeof(cl_mem *), &m2_cpy
+    );
+    print_buffer(&program, &queue, &m2_cpy, N_2, "M2_CPY");
+
+    sort(&ctx, &program, &queue, N_2, &m2_cpy, &m2);
+    print_buffer(&program, &queue, &m2_cpy, N_2, "M2");
+
+    clEnqueueReadBuffer(queue, m2_cpy, CL_TRUE, 0, N_2 * sizeof(cl_double), m2_host, 0, NULL, NULL);
+    int k = 0;
+    while (m2_host[k] == 0 && k < N_2 - 1) k++;
+    cl_double m2_min = m2_host[k];
+
+    run_kernel(
+      "map_sin", &ctx ,&program, &queue, N_2, 3,
+      sizeof(cl_mem *), &m2_cpy, sizeof(cl_mem *), &m2_cpy, sizeof(cl_double), &m2_min
+    );
+    print_buffer(&program, &queue, &m2_cpy, N_2, "M2");
+
+    double X = 0;
+    reduce_sum(&ctx ,&program, &queue, N_2, &m2_cpy, &X);
+    printf("%f ", X);
+  }
 
   clFinish( queue );
+  free(m1_host);
+  free(m2_host);
 
+  double time_end = get_time();
+  printf("\n%f\n", time_end - time_start);
   return 0;
 }
