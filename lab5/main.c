@@ -264,8 +264,7 @@ void parallel_separate(
         n_done += n_cur_chunk;
         sem_post(t_info -> sems_begin + t_id);
 
-        #ifdef SHEDULE_DYNAMIC
-        #else
+        #ifndef SHEDULE_DYNAMIC
             t_id++;
         #endif
     }

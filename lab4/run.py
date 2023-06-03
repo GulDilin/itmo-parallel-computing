@@ -26,7 +26,7 @@ def run(
     print()
     r = result.rsplit('\n')
     r = [it for it in r if not it.startswith('PROGRESS')]
-    timing = r[-2]
+    timing = r[-2] if not r[-1] else r[-1]
     numbers_s = r[:-2]
     benchmarks = []
     bench_start_id = r.index('BENCHMARK')
@@ -113,7 +113,7 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     # k_variants = range(0, 17)
-    k_variants = [2, 3, 4, 8, 16]
+    k_variants = [0]
     parser.add_argument('--n-threads', '-k', dest="k_variants", type=int, nargs="*", default=k_variants)
     parser.add_argument('--n-variants', dest="n_variants", type=int, nargs="*", default=None)
     parser.add_argument('--n-start', dest="n_start", type=int, default=None)
